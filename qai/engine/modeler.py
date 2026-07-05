@@ -23,19 +23,48 @@ from qai.engine.logging import get_logger
 
 _log = get_logger("modeler")
 
-# Runs in the page: returns a plain JSON tree of forms + fields with a stable selector each.
-_EXTRACT_JS = r"""
-() => {
-  const cssEscape = (s) => (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+# Shared by both scripts below: a selector must be unique across the WHOLE document,
+# not just among its parent's children — a bare `tag:nth-of-type(n)` matches every
+# element that happens to be the n-th child of *its own* parent anywhere on the page,
+# which caused the executor to fill the wrong field entirely on real, complex pages
+# (found live: multiple orphan-clustered fields collided on `input:nth-of-type(1)`).
+# Building the full ancestor-anchored path (or an id/unique-name shortcut) fixes that.
+_SELECTOR_FOR_JS = r"""
   const selectorFor = (el) => {
     if (el.id) return '#' + cssEscape(el.id);
-    if (el.name) return el.tagName.toLowerCase() + '[name="' + el.name + '"]';
-    const parent = el.parentElement;
-    if (!parent) return el.tagName.toLowerCase();
-    const same = Array.from(parent.children).filter(c => c.tagName === el.tagName);
-    const idx = same.indexOf(el) + 1;
-    return el.tagName.toLowerCase() + ':nth-of-type(' + idx + ')';
+    if (el.name) {
+      const byName = el.tagName.toLowerCase() + '[name="' + el.name + '"]';
+      if (document.querySelectorAll(byName).length === 1) return byName;
+    }
+    const segments = [];
+    let cur = el;
+    while (cur && cur.nodeType === 1) {
+      if (cur.id) {
+        segments.unshift('#' + cssEscape(cur.id));
+        break;
+      }
+      const parent = cur.parentElement;
+      if (!parent) {
+        segments.unshift(cur.tagName.toLowerCase());
+        break;
+      }
+      const sameTag = Array.from(parent.children).filter(c => c.tagName === cur.tagName);
+      const idx = sameTag.indexOf(cur) + 1;
+      segments.unshift(cur.tagName.toLowerCase() + ':nth-of-type(' + idx + ')');
+      cur = parent;
+    }
+    return segments.join(' > ');
   };
+"""
+
+# Runs in the page: returns a plain JSON tree of forms + fields with a stable selector each.
+_EXTRACT_JS = (
+    r"""
+() => {
+  const cssEscape = (s) => (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+"""
+    + _SELECTOR_FOR_JS
+    + r"""
   const labelFor = (el) => {
     if (el.id) {
       const l = document.querySelector('label[for="' + (window.CSS?CSS.escape(el.id):el.id) + '"]');
@@ -144,19 +173,16 @@ _EXTRACT_JS = r"""
   return forms;
 }
 """
+)
 
 
-_DISCOVER_ACTIONS_JS = r"""
+_DISCOVER_ACTIONS_JS = (
+    r"""
 () => {
   const cssEscape = (s) => (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
-  const selectorFor = (el) => {
-    if (el.id) return '#' + cssEscape(el.id);
-    const parent = el.parentElement;
-    if (!parent) return el.tagName.toLowerCase();
-    const same = Array.from(parent.children).filter(c => c.tagName === el.tagName);
-    const idx = same.indexOf(el) + 1;
-    return el.tagName.toLowerCase() + ':nth-of-type(' + idx + ')';
-  };
+"""
+    + _SELECTOR_FOR_JS
+    + r"""
   const labelOf = (el) => (el.innerText || el.getAttribute('aria-label') || el.value || '').trim();
   const links = Array.from(document.querySelectorAll('a[href]')).map(el => {
     let abs = null;
@@ -169,6 +195,7 @@ _DISCOVER_ACTIONS_JS = r"""
   return [...links, ...buttons];
 }
 """
+)
 
 
 class PageModeler:
