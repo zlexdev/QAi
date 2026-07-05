@@ -256,7 +256,9 @@ async def _run_worker(
                 if direct_mode and form.group_id not in templates and plan.case.intent is FuzzIntent.VALID:
                     templates[form.group_id] = _learn_from_effect(form, effect)
 
-            for finding in analyzer.analyze(plan, effect, submit_method=form.method):
+            for finding in analyzer.analyze(
+                plan, effect, submit_method=form.method, page_origin=url
+            ):
                 if correlator is not None and finding.request is not None:
                     source = correlator.correlate(finding.request)
                     finding = finding.model_copy(update={"source_location": source})

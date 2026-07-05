@@ -6,6 +6,8 @@ gracefully — a 500 or a silent 200 swallow is a bug, not just an unexpected ac
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from qai.engine.contracts import (
     ConsoleLevel,
     EffectBundle,
@@ -35,15 +37,22 @@ class Analyzer:
     """Stateless: consumes one (plan, effect) pair, emits zero or more Findings."""
 
     def analyze(
-        self, plan: FuzzPlan, effect: EffectBundle, submit_method: HttpMethod | None = None
+        self,
+        plan: FuzzPlan,
+        effect: EffectBundle,
+        submit_method: HttpMethod | None = None,
+        page_origin: str | None = None,
     ) -> list[Finding]:
         """``submit_method`` — the form's own submission method (its ``method`` attr,
-        default POST). Only requests using that method are treated as caused by the
-        fuzzed submission; a capture window can otherwise sweep in unrelated background
-        traffic (nav-link prefetch HEAD requests, analytics beacons) that has nothing to
-        do with this action and would otherwise misattribute noise as a finding."""
+        default POST); ``page_origin`` — the scanned page's own origin. Only same-
+        method, same-origin requests are treated as caused by the fuzzed submission —
+        a capture window can otherwise sweep in unrelated background traffic (nav-link
+        prefetch HEAD requests, third-party analytics/telemetry beacons that share the
+        page's own POST method but not its origin) and misattribute noise as a finding
+        (found live: 25/27 "findings" on a real site were failed Google Analytics
+        beacons, not anything the fuzzed form actually caused)."""
         findings: list[Finding] = []
-        findings += self._request_findings(plan, effect, submit_method)
+        findings += self._request_findings(plan, effect, submit_method, page_origin)
         findings += self._console_findings(plan, effect)
         findings += self._dom_error_findings(plan, effect)
         if findings:
@@ -56,12 +65,19 @@ class Analyzer:
         return findings
 
     def _request_findings(
-        self, plan: FuzzPlan, effect: EffectBundle, submit_method: HttpMethod | None
+        self,
+        plan: FuzzPlan,
+        effect: EffectBundle,
+        submit_method: HttpMethod | None,
+        page_origin: str | None,
     ) -> list[Finding]:
         out: list[Finding] = []
         candidates = effect.requests
         if submit_method is not None:
             candidates = [r for r in candidates if r.method is submit_method]
+        if page_origin is not None:
+            expected = urlsplit(page_origin).netloc
+            candidates = [r for r in candidates if urlsplit(r.url).netloc == expected]
         for req in candidates:
             if req.response_kind is ResponseKind.SERVER_ERROR:
                 out.append(

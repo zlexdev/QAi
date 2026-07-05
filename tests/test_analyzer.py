@@ -67,6 +67,42 @@ def test_matching_method_request_still_produces_a_finding() -> None:
     assert findings[0].kind is FindingKind.SERVER_ERROR
 
 
+def test_third_party_same_method_request_is_ignored_when_page_origin_given() -> None:
+    """A third-party analytics beacon (Google Analytics /g/collect) shares the page's
+    own POST method but not its origin — found live: 25/27 "findings" on a real site
+    were failed GA beacons, nothing the fuzzed form actually caused."""
+    noise = CapturedRequest(
+        method=HttpMethod.POST,
+        url="https://www.google-analytics.com/g/collect?v=2",
+        status=0,
+        response_kind=ResponseKind.NETWORK_FAIL,
+    )
+    effect = EffectBundle(action_id="g1::#roi::malicious::0", requests=[noise])
+
+    findings = Analyzer().analyze(
+        _plan(), effect, submit_method=HttpMethod.POST, page_origin="https://example.com/"
+    )
+
+    assert findings == []
+
+
+def test_same_origin_request_still_produces_a_finding() -> None:
+    real = CapturedRequest(
+        method=HttpMethod.POST,
+        url="https://example.com/submit",
+        status=500,
+        response_kind=ResponseKind.SERVER_ERROR,
+    )
+    effect = EffectBundle(action_id="g1::#roi::malicious::0", requests=[real])
+
+    findings = Analyzer().analyze(
+        _plan(), effect, submit_method=HttpMethod.POST, page_origin="https://example.com/"
+    )
+
+    assert len(findings) == 1
+    assert findings[0].kind is FindingKind.SERVER_ERROR
+
+
 def test_no_submit_method_keeps_old_unfiltered_behavior() -> None:
     noise = CapturedRequest(
         method=HttpMethod.HEAD,
