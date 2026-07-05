@@ -24,6 +24,7 @@ from qai.engine.contracts import (
     CrawlBudget,
     CrawlReport,
     EffectBundle,
+    FieldModel,
     Finding,
     FormModel,
     FuzzIntent,
@@ -51,6 +52,10 @@ def validate_url(url: str) -> str:
     if not _URL_RE.match(url):
         raise InvalidTargetError(url, "must start with http:// or https://")
     return url
+
+
+def _flatten_fields(page_model: PageModel) -> list[FieldModel]:
+    return [f for form in page_model.forms for f in form.fields]
 
 
 async def run_scan(
@@ -105,6 +110,7 @@ async def run_scan(
                 forms_scanned=forms_scanned,
                 cases_executed=0,
                 safe_mode=safe_mode,
+                fields_examined=_flatten_fields(page_model),
                 findings=[],
             )
 
@@ -133,6 +139,7 @@ async def run_scan(
         cases_executed=cases_executed,
         tabs_used=workers,
         har_paths=har_paths,
+        fields_examined=_flatten_fields(page_model),
         findings=findings,
     )
     _log.info(
@@ -360,6 +367,7 @@ async def run_crawl(
                     tabs_used=workers,
                     har_paths=har_paths,
                     safe_mode=safe_mode,
+                    fields_examined=_flatten_fields(page_model),
                     findings=findings,
                 )
             )
@@ -373,6 +381,7 @@ async def run_crawl(
         finished_at=datetime.now(UTC),
         states_visited=result.states,
         pages=pages,
+        pages_not_visited=result.not_visited,
         skipped_destructive=result.skipped_destructive,
         budget_exhausted_by=result.budget_exhausted_by,
     )

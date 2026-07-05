@@ -12,7 +12,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from qai.engine.contracts import Finding, ScanReport, Severity
+from qai.engine.contracts import CrawlReport, Finding, RunReport, ScanReport, Severity
 
 
 def _severity_key(finding: Finding) -> int:
@@ -150,15 +150,24 @@ def _render_markdown(report: ScanReport) -> str:
         "",
         f"- **Target**: {report.target_url}",
         f"- **Status**: {status}",
+        f"- **Duration**: {report.duration_seconds:.1f}s",
         f"- **Forms scanned**: {report.forms_scanned}",
         f"- **Cases executed**: {report.cases_executed}",
         f"- **Findings**: {len(report.findings)}",
         "",
     ]
+
+    if isinstance(report, CrawlReport):
+        lines += _render_crawl_pages_markdown(report)
+    else:
+        lines += _render_run_fields_markdown(report)
+
     if not report.findings:
         lines.append("No findings — every case behaved as expected.")
         return "\n".join(lines) + "\n"
 
+    lines.append("## Findings")
+    lines.append("")
     lines.append("| Severity | Kind | Field | Intent | Detail | Source |")
     lines.append("|---|---|---|---|---|---|")
     for f in sorted(report.findings, key=_severity_key):
@@ -169,6 +178,62 @@ def _render_markdown(report: ScanReport) -> str:
             f"| {f.intent.value if f.intent else '-'} | {detail} | `{source}` |"
         )
     return "\n".join(lines) + "\n"
+
+
+def _render_run_fields_markdown(report: RunReport) -> list[str]:
+    if not report.fields_examined:
+        return []
+    lines = ["## Fields examined", "", "| Selector | Kind | Name | Label |", "|---|---|---|---|"]
+    for f in report.fields_examined:
+        lines.append(f"| `{f.selector}` | {f.kind.value} | {f.name or '-'} | {f.label or '-'} |")
+    lines.append("")
+    return lines
+
+
+def _render_crawl_pages_markdown(report: CrawlReport) -> list[str]:
+    lines = [
+        f"- **Pages visited**: {len(report.pages)}",
+        f"- **Pages not visited**: {len(report.pages_not_visited)}",
+        f"- **Destructive actions skipped**: {len(report.skipped_destructive)}",
+    ]
+    if report.budget_exhausted_by:
+        lines.append(f"- **Stopped early**: budget exhausted ({report.budget_exhausted_by})")
+    lines.append("")
+
+    lines.append("## Pages visited")
+    lines.append("")
+    if not report.pages:
+        lines.append("(none)")
+    for page in report.pages:
+        lines.append(f"### {page.target_url}")
+        lines.append("")
+        lines.append(
+            f"- Duration: {page.duration_seconds:.1f}s · Forms: {page.forms_scanned} · "
+            f"Cases: {page.cases_executed} · Findings: {len(page.findings)}"
+        )
+        if page.fields_examined:
+            lines.append("- Fields: " + ", ".join(f"`{f.selector}`" for f in page.fields_examined))
+        lines.append("")
+
+    if report.pages_not_visited:
+        lines.append("## Pages NOT visited")
+        lines.append("")
+        lines.append("| URL | Reason |")
+        lines.append("|---|---|")
+        for skipped in report.pages_not_visited:
+            lines.append(f"| {skipped.url} | {skipped.reason.value} |")
+        lines.append("")
+
+    if report.skipped_destructive:
+        lines.append("## Destructive actions skipped (never clicked)")
+        lines.append("")
+        lines.append("| Selector | Label |")
+        lines.append("|---|---|")
+        for action in report.skipped_destructive:
+            lines.append(f"| `{action.selector}` | {action.label or '-'} |")
+        lines.append("")
+
+    return lines
 
 
 def _finding_row(f: Finding) -> str:

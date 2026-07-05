@@ -258,6 +258,21 @@ class RequestTemplate(BaseModel):
     field_values: dict[str, str]  # selector -> baseline value, must appear verbatim in body
 
 
+class SkipReason(StrEnum):
+    BUDGET_MAX_ACTIONS = "budget_max_actions"
+    BUDGET_WALL_CLOCK = "budget_wall_clock"
+    TRAP_DETECTED = "trap_detected"
+    REPLAY_FAILED = "replay_failed"
+
+
+class SkippedPage(BaseModel):
+    """A page the crawler discovered a link/button to but never actually visited."""
+
+    model_config = _FROZEN
+    url: str
+    reason: SkipReason
+
+
 class RunReport(BaseModel):
     """Top-level result of one scan — the machine output consumed by CLI/MCP/CI."""
 
@@ -272,11 +287,16 @@ class RunReport(BaseModel):
     tabs_used: int = 1
     har_paths: list[str] = Field(default_factory=list)
     safe_mode: bool = False
+    fields_examined: list[FieldModel] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         return not self.findings
+
+    @property
+    def duration_seconds(self) -> float:
+        return (self.finished_at - self.started_at).total_seconds()
 
 
 class CrawlBudget(BaseModel):
@@ -297,6 +317,7 @@ class CrawlReport(BaseModel):
     finished_at: datetime
     states_visited: list[StateRef] = Field(default_factory=list)
     pages: list[RunReport] = Field(default_factory=list)
+    pages_not_visited: list[SkippedPage] = Field(default_factory=list)
     skipped_destructive: list[CrawlAction] = Field(default_factory=list)
     budget_exhausted_by: str | None = None
 
@@ -307,6 +328,10 @@ class CrawlReport(BaseModel):
     @property
     def ok(self) -> bool:
         return not self.findings
+
+    @property
+    def duration_seconds(self) -> float:
+        return (self.finished_at - self.started_at).total_seconds()
 
     # Aliases so Reporter (built for RunReport) renders a CrawlReport unchanged.
     @property

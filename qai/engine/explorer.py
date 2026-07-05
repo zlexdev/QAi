@@ -14,7 +14,15 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from qai.engine.capture import CaptureSession
-from qai.engine.contracts import ActionKind, CrawlAction, CrawlBudget, PageModel, StateRef
+from qai.engine.contracts import (
+    ActionKind,
+    CrawlAction,
+    CrawlBudget,
+    PageModel,
+    SkippedPage,
+    SkipReason,
+    StateRef,
+)
 from qai.engine.logging import get_logger
 from qai.engine.modeler import PageModeler
 from qai.engine.risk import is_allowlisted, is_destructive
@@ -22,6 +30,7 @@ from qai.engine.state import compute_state
 
 _log = get_logger("explorer")
 _CLICK_SETTLE_MS = 500
+_UNKNOWN_TARGET = "(unknown — SPA action chain, not a direct link)"
 
 
 @dataclass(slots=True)
@@ -29,7 +38,14 @@ class ExplorerResult:
     visited: list[tuple[StateRef, PageModel]] = field(default_factory=list)
     states: list[StateRef] = field(default_factory=list)
     skipped_destructive: list[CrawlAction] = field(default_factory=list)
+    not_visited: list[SkippedPage] = field(default_factory=list)
     budget_exhausted_by: str | None = None
+
+
+def _target_of(path: list[CrawlAction]) -> str:
+    if path and path[-1].kind is ActionKind.LINK and path[-1].href:
+        return path[-1].href
+    return _UNKNOWN_TARGET
 
 
 class Explorer:
@@ -67,12 +83,18 @@ class Explorer:
                 await self._restore(root_url, path)
             except Exception as exc:
                 _log.warning("replay_failed", path_len=len(path), error=str(exc))
+                result.not_visited.append(
+                    SkippedPage(url=_target_of(path), reason=SkipReason.REPLAY_FAILED)
+                )
                 continue
 
             state = await compute_state(self._session.page)
             seen = self._seen_hash_counts.get(state.dom_hash, 0)
             if seen >= self._budget.trap_repeat_limit:
                 _log.info("trap_detected", dom_hash=state.dom_hash, seen=seen)
+                result.not_visited.append(
+                    SkippedPage(url=state.normalized_url, reason=SkipReason.TRAP_DETECTED)
+                )
                 continue
             self._seen_hash_counts[state.dom_hash] = seen + 1
             result.states.append(state)
@@ -103,6 +125,16 @@ class Explorer:
                     continue
                 actions_taken += 1
                 frontier.append(([*path, action], depth + 1))
+
+        if result.budget_exhausted_by is not None and frontier:
+            reason = (
+                SkipReason.BUDGET_WALL_CLOCK
+                if result.budget_exhausted_by == "wall_clock"
+                else SkipReason.BUDGET_MAX_ACTIONS
+            )
+            result.not_visited.extend(
+                SkippedPage(url=_target_of(path), reason=reason) for path, _depth in frontier
+            )
 
         return result
 
