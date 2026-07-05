@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from qai.engine.analyzer import Analyzer
-from qai.engine.capture import CaptureSession
+from qai.engine.capture import BrowserPool, CaptureSession
 from qai.engine.contracts import (
     CrawlBudget,
     CrawlReport,
@@ -86,22 +86,100 @@ async def run_scan(
         root = require_repo(Path(repo_path))
         correlator = CodeCorrelator(build_route_table(root), root)
 
-    page_model = await _recon(url, headless, run_id)
-    forms_scanned = len(page_model.forms)
+    # One shared browser process for this whole call (recon + every fuzz worker) —
+    # launching a fresh Chromium process per CaptureSession is the dominant cost of
+    # --parallel N; a BrowserPool turns that into N cheap BrowserContexts instead.
+    pool = await BrowserPool.create(headless=headless)
+    stability_cache: dict[str, float] = {}
+    try:
+        page_model = await _recon(url, run_id, pool, stability_cache)
+        forms_scanned = len(page_model.forms)
 
-    if safe_mode or not page_model.forms:
-        return RunReport(
+        if safe_mode or not page_model.forms:
+            return RunReport(
+                run_id=run_id,
+                target_url=url,
+                repo_path=repo_path,
+                started_at=started_at,
+                finished_at=datetime.now(UTC),
+                forms_scanned=forms_scanned,
+                cases_executed=0,
+                safe_mode=safe_mode,
+                findings=[],
+            )
+
+        findings, cases_executed, workers, har_paths = await _fuzz_page_model(
+            url=url,
+            page_model=page_model,
             run_id=run_id,
-            target_url=url,
-            repo_path=repo_path,
-            started_at=started_at,
-            finished_at=datetime.now(UTC),
-            forms_scanned=forms_scanned,
-            cases_executed=0,
-            safe_mode=safe_mode,
-            findings=[],
+            pool=pool,
+            stability_cache=stability_cache,
+            headless=headless,
+            max_parallel=max_parallel,
+            har_dir=har_dir,
+            direct_mode=direct_mode,
+            correlator=correlator,
         )
+    finally:
+        await pool.close()
 
+    report = RunReport(
+        run_id=run_id,
+        target_url=url,
+        repo_path=repo_path,
+        started_at=started_at,
+        finished_at=datetime.now(UTC),
+        forms_scanned=forms_scanned,
+        cases_executed=cases_executed,
+        tabs_used=workers,
+        har_paths=har_paths,
+        findings=findings,
+    )
+    _log.info(
+        "scan_complete",
+        run_id=run_id,
+        forms=forms_scanned,
+        cases=cases_executed,
+        tabs=workers,
+        findings=len(findings),
+    )
+    return report
+
+
+async def _recon(
+    url: str,
+    run_id: str,
+    pool: BrowserPool,
+    stability_cache: dict[str, float],
+) -> PageModel:
+    """One-off session that only models the page — never fills or submits anything."""
+    modeler = PageModeler()
+    async with CaptureSession(
+        run_id=run_id, tab_id="recon", pool=pool, stability_cache=stability_cache
+    ) as session:
+        await session.open(url)
+        return await modeler.model(session.page)
+
+
+async def _fuzz_page_model(
+    *,
+    url: str,
+    page_model: PageModel,
+    run_id: str,
+    pool: BrowserPool,
+    stability_cache: dict[str, float],
+    headless: bool,
+    max_parallel: int,
+    har_dir: str | None,
+    direct_mode: bool,
+    correlator: CodeCorrelator | None,
+) -> tuple[list[Finding], int, int, list[str]]:
+    """Fuzzes every field of an already-modeled page. Factored out of ``run_scan`` so
+    ``run_crawl`` can fuzz Explorer's already-visited pages directly, instead of paying
+    a second navigation+model pass per page via a nested ``run_scan`` call.
+
+    Returns (findings, cases_executed, workers_used, har_paths).
+    """
     generator = DataGenerator()
     work: list[WorkItem] = [
         (form, plan) for form in page_model.forms for plan in generator.plans(form)
@@ -126,42 +204,15 @@ async def run_scan(
                 har_paths,
                 direct_mode,
                 templates,
+                pool,
+                stability_cache,
             )
             for tab_index, bucket in enumerate(buckets)
             if bucket
         )
     )
     findings: list[Finding] = [f for batch in results for f in batch]
-
-    report = RunReport(
-        run_id=run_id,
-        target_url=url,
-        repo_path=repo_path,
-        started_at=started_at,
-        finished_at=datetime.now(UTC),
-        forms_scanned=forms_scanned,
-        cases_executed=len(work),
-        tabs_used=workers,
-        har_paths=har_paths,
-        findings=findings,
-    )
-    _log.info(
-        "scan_complete",
-        run_id=run_id,
-        forms=forms_scanned,
-        cases=len(work),
-        tabs=workers,
-        findings=len(findings),
-    )
-    return report
-
-
-async def _recon(url: str, headless: bool, run_id: str) -> PageModel:
-    """One-off session that only models the page — never fills or submits anything."""
-    modeler = PageModeler()
-    async with CaptureSession(headless=headless, run_id=run_id, tab_id="recon") as session:
-        await session.open(url)
-        return await modeler.model(session.page)
+    return findings, len(work), workers, har_paths
 
 
 async def _run_worker(
@@ -175,6 +226,8 @@ async def _run_worker(
     har_paths: list[str],
     direct_mode: bool,
     templates: dict[str, RequestTemplate | None],
+    pool: BrowserPool,
+    stability_cache: dict[str, float],
 ) -> list[Finding]:
     tab_id = f"tab-{tab_index}"
     har_path = str(Path(har_dir) / f"{run_id}-{tab_id}.har") if har_dir else None
@@ -183,7 +236,12 @@ async def _run_worker(
 
     findings: list[Finding] = []
     async with CaptureSession(
-        headless=headless, run_id=run_id, tab_id=tab_id, har_path=har_path
+        headless=headless,
+        run_id=run_id,
+        tab_id=tab_id,
+        har_path=har_path,
+        pool=pool,
+        stability_cache=stability_cache,
     ) as session:
         executor = FormExecutor(session)
         await session.open(url)
@@ -249,23 +307,62 @@ async def run_crawl(
     started_at = datetime.now(UTC)
     active_budget = budget or CrawlBudget()
 
-    async with CaptureSession(headless=headless, run_id=run_id, tab_id="explorer") as session:
-        explorer = Explorer(session, active_budget, allowlist=allowlist)
-        result = await explorer.crawl(root)
+    correlator: CodeCorrelator | None = None
+    if repo_path:
+        repo_root = require_repo(Path(repo_path))
+        correlator = CodeCorrelator(build_route_table(repo_root), repo_root)
 
-    pages: list[RunReport] = [
-        await run_scan(
-            state.normalized_url,
-            repo_path,
-            headless=headless,
-            max_parallel=max_parallel,
-            har_dir=har_dir,
-            safe_mode=safe_mode,
-            direct_mode=direct_mode,
-        )
-        for state, page_model in result.visited
-        if page_model.forms
-    ]
+    pool = await BrowserPool.create(headless=headless)
+    stability_cache: dict[str, float] = {}
+    pages: list[RunReport] = []
+    try:
+        async with CaptureSession(
+            run_id=run_id, tab_id="explorer", pool=pool, stability_cache=stability_cache
+        ) as session:
+            explorer = Explorer(session, active_budget, allowlist=allowlist)
+            result = await explorer.crawl(root)
+
+        # Fuzz Explorer's already-modeled pages directly — no second recon pass per
+        # page (a plain run_scan(state.normalized_url, ...) call would re-navigate and
+        # re-model a page Explorer just visited).
+        for state, page_model in result.visited:
+            if not page_model.forms:
+                continue
+            page_started = datetime.now(UTC)
+            if safe_mode:
+                findings: list[Finding] = []
+                cases_executed, workers = 0, 1
+                har_paths: list[str] = []
+            else:
+                findings, cases_executed, workers, har_paths = await _fuzz_page_model(
+                    url=state.normalized_url,
+                    page_model=page_model,
+                    run_id=run_id,
+                    pool=pool,
+                    stability_cache=stability_cache,
+                    headless=headless,
+                    max_parallel=max_parallel,
+                    har_dir=har_dir,
+                    direct_mode=direct_mode,
+                    correlator=correlator,
+                )
+            pages.append(
+                RunReport(
+                    run_id=run_id,
+                    target_url=state.normalized_url,
+                    repo_path=repo_path,
+                    started_at=page_started,
+                    finished_at=datetime.now(UTC),
+                    forms_scanned=len(page_model.forms),
+                    cases_executed=cases_executed,
+                    tabs_used=workers,
+                    har_paths=har_paths,
+                    safe_mode=safe_mode,
+                    findings=findings,
+                )
+            )
+    finally:
+        await pool.close()
 
     report = CrawlReport(
         run_id=run_id,

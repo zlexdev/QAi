@@ -10,9 +10,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import TracebackType
 from typing import Any, Self
+from urllib.parse import urlsplit
 
 from playwright.async_api import (
     APIRequestContext,
@@ -55,6 +57,34 @@ _CF_TITLE_MARKERS = ("just a moment", "checking your browser", "attention requir
 _ERROR_SELECTOR = '[role="alert"], .error, .alert-danger, [aria-invalid="true"]'
 
 
+@dataclass(slots=True)
+class BrowserPool:
+    """Shared Playwright + Browser process — N worker CaptureSessions borrow a
+    BrowserContext each instead of each launching their own Chromium process.
+
+    Caller owns the lifecycle: create once, pass to every CaptureSession that should
+    share it, then ``await pool.close()`` after all sessions have exited.
+    """
+
+    playwright: Playwright
+    browser: Browser
+
+    @classmethod
+    async def create(cls, *, headless: bool = True) -> BrowserPool:
+        pw = await async_playwright().start()
+        browser = await pw.chromium.launch(headless=headless)
+        return cls(playwright=pw, browser=browser)
+
+    async def close(self) -> None:
+        await self.browser.close()
+        await self.playwright.stop()
+
+
+def _origin_of(url: str) -> str:
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}"
+
+
 def _truncate_body(body: str | None) -> str | None:
     """Cap stored request bodies — overflow fuzz cases can be 100k+ chars, which would
     otherwise bloat every JSON report and log line with an unreadable wall of text."""
@@ -77,11 +107,18 @@ class CaptureSession:
         run_id: str = "-",
         tab_id: str = "tab-0",
         har_path: str | None = None,
+        pool: BrowserPool | None = None,
+        stability_cache: dict[str, float] | None = None,
     ) -> None:
         self._headless = headless
         self._run_id = run_id
         self._tab_id = tab_id
         self._har_path = har_path
+        self._pool = pool
+        # origin -> observed DOM-stability settle time (seconds); shared across tabs in
+        # the same run so only the FIRST load of a given origin pays the full poll cap.
+        self._stability_cache = stability_cache if stability_cache is not None else {}
+        self._owns_browser = pool is None
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
@@ -115,8 +152,11 @@ class CaptureSession:
         return self._context.request
 
     async def __aenter__(self) -> Self:
-        self._pw = await async_playwright().start()
-        self._browser = await self._pw.chromium.launch(headless=self._headless)
+        if self._pool is not None:
+            self._browser = self._pool.browser
+        else:
+            self._pw = await async_playwright().start()
+            self._browser = await self._pw.chromium.launch(headless=self._headless)
         self._context = await self._browser.new_context(record_har_path=self._har_path)
         self._page = await self._context.new_page()
         await self._wire_listeners(self._page)
@@ -129,11 +169,15 @@ class CaptureSession:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        for closer in (self._context, self._browser):
-            if closer is not None:
-                await closer.close()
-        if self._pw is not None:
-            await self._pw.stop()
+        # A pooled browser/playwright is owned by the pool's creator — only ever close
+        # the context this session made, never the shared process underneath it.
+        if self._context is not None:
+            await self._context.close()
+        if self._owns_browser:
+            if self._browser is not None:
+                await self._browser.close()
+            if self._pw is not None:
+                await self._pw.stop()
 
     async def _wire_cdp(self, page: Page) -> None:
         try:
@@ -279,9 +323,27 @@ class CaptureSession:
         """Hydration-aware settle: frameworks like Next.js reach ``networkidle`` before
         client components finish mounting, so interactive elements (buttons, forms) can
         still be absent right after navigation. Poll the element count until it stops
-        growing, capped low so static pages don't pay the cost."""
+        growing, capped low so static pages don't pay the cost.
+
+        The poll budget for an origin shrinks after its first observed settle time
+        (cached, shared across tabs in the same run via ``self._stability_cache``) — a
+        static/SSR page (qai's primary FastAPI target) stops paying the full worst-case
+        cap on every one of its many reloads between fuzz cases. The cache only ever
+        grows to the *max* observed settle time for that origin, never below it, so a
+        one-off slow load doesn't get under-budgeted on a later reload.
+        """
+        origin = _origin_of(self.page.url)
+        cached_ms = self._stability_cache.get(origin)
+        floor_ms = _DOM_STABLE_POLL_MS * (_DOM_STABLE_CONSECUTIVE + 1)
+        budget_ms = (
+            _DOM_STABLE_TIMEOUT_MS
+            if cached_ms is None
+            else min(_DOM_STABLE_TIMEOUT_MS, max(cached_ms * 1.5, floor_ms))
+        )
+
         loop = asyncio.get_event_loop()
-        deadline = loop.time() + _DOM_STABLE_TIMEOUT_MS / 1000
+        start = loop.time()
+        deadline = start + budget_ms / 1000
         try:
             last_count = await self.page.evaluate("document.querySelectorAll('*').length")
         except Exception:
@@ -295,6 +357,9 @@ class CaptureSession:
                 return
             consecutive_matches = consecutive_matches + 1 if count == last_count else 0
             last_count = count
+
+        elapsed_ms = (loop.time() - start) * 1000
+        self._stability_cache[origin] = max(cached_ms or 0.0, elapsed_ms)
 
     async def _snapshot_dom_errors(self) -> set[str]:
         try:
