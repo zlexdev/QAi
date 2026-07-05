@@ -302,6 +302,8 @@ class RunReport(BaseModel):
 class CrawlBudget(BaseModel):
     model_config = _FROZEN
     max_depth: int = 2
+    # Pages actually VISITED (root excluded), not links merely discovered — a nav menu
+    # with 30 links must not exhaust this before the crawler leaves the root page.
     max_actions: int = 50
     wall_clock_seconds: int = 180
     trap_repeat_limit: int = 3

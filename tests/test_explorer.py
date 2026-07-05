@@ -49,10 +49,31 @@ def _free_port() -> int:
         return port
 
 
-@pytest.fixture(scope="module")
-def crawl_site() -> Iterator[str]:
+def _duplicate_links_app() -> FastAPI:
+    """Simulates header+footer+mobile-nav all linking to the same two targets —
+    the exact pattern found live on a real marketplace that wasted 2/3 of a crawl's
+    action budget re-queueing the same URLs three times each."""
+    app = FastAPI()
+    nav = '<a href="/a">A</a><a href="/b">B</a>'
+
+    @app.get("/", response_class=HTMLResponse)
+    async def root() -> str:
+        return f"<header>{nav}</header><footer>{nav}</footer><nav>{nav}</nav>"
+
+    @app.get("/a", response_class=HTMLResponse)
+    async def page_a() -> str:
+        return "<p>A</p>"
+
+    @app.get("/b", response_class=HTMLResponse)
+    async def page_b() -> str:
+        return "<p>B</p>"
+
+    return app
+
+
+def _start_server(app: FastAPI) -> tuple[str, uvicorn.Server, threading.Thread]:
     port = _free_port()
-    config = uvicorn.Config(_crawl_app(), host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -60,9 +81,42 @@ def crawl_site() -> Iterator[str]:
         if server.started:
             break
         time.sleep(0.1)
-    yield f"http://127.0.0.1:{port}"
+    return f"http://127.0.0.1:{port}", server, thread
+
+
+@pytest.fixture(scope="module")
+def crawl_site() -> Iterator[str]:
+    url, server, thread = _start_server(_crawl_app())
+    yield url
     server.should_exit = True
     thread.join(timeout=5)
+
+
+@pytest.fixture
+def duplicate_links_site() -> Iterator[str]:
+    url, server, thread = _start_server(_duplicate_links_app())
+    yield url
+    server.should_exit = True
+    thread.join(timeout=5)
+
+
+async def test_duplicate_links_are_deduped_not_budget_burned(duplicate_links_site: str) -> None:
+    """3x duplicate links to the same 2 targets must consume budget for 2 visits,
+    not exhaust it before leaving the root — the bug found live on starvell.com,
+    where a 30-link nav (10 unique x3 duplicated) exhausted a 30-action budget
+    before the crawler ever left the root page."""
+    budget = CrawlBudget(max_depth=2, max_actions=5, wall_clock_seconds=30)
+    async with CaptureSession(headless=True, run_id="t") as session:
+        explorer = Explorer(session, budget)
+        result = await explorer.crawl(duplicate_links_site)
+
+    visited_urls = {s.normalized_url for s in result.states}
+    assert normalize_url(f"{duplicate_links_site}/a") in visited_urls
+    assert normalize_url(f"{duplicate_links_site}/b") in visited_urls
+    assert result.budget_exhausted_by is None
+
+    not_visited_urls = [p.url for p in result.not_visited]
+    assert len(not_visited_urls) == len(set(not_visited_urls)), "duplicate targets were queued twice"
 
 
 async def test_explorer_visits_all_pages_and_skips_destructive(crawl_site: str) -> None:

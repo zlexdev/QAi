@@ -26,11 +26,15 @@ from qai.engine.contracts import (
 from qai.engine.logging import get_logger
 from qai.engine.modeler import PageModeler
 from qai.engine.risk import is_allowlisted, is_destructive
-from qai.engine.state import compute_state
+from qai.engine.state import compute_state, normalize_url
 
 _log = get_logger("explorer")
 _CLICK_SETTLE_MS = 500
 _UNKNOWN_TARGET = "(unknown — SPA action chain, not a direct link)"
+# Safety valve independent of max_actions — a page with hundreds of unique links
+# shouldn't grow the frontier unbounded while max_actions still counts *visited*
+# pages one at a time.
+_FRONTIER_SAFETY_CAP = 2000
 
 
 @dataclass(slots=True)
@@ -68,10 +72,16 @@ class Explorer:
         deadline = time.monotonic() + self._budget.wall_clock_seconds
         frontier: deque[tuple[list[CrawlAction], int]] = deque([([], 0)])
         result = ExplorerResult()
-        actions_taken = 0
+        # max_actions counts pages actually VISITED (root doesn't count against it),
+        # not pages merely discovered — a nav menu with 30 links must not exhaust the
+        # whole budget before the crawler ever leaves the root page.
+        visited_count = 0
+        # Dedups discovered links before queueing — a header/footer/mobile-nav trio
+        # linking to the same URL three times must not burn 3x the budget on one target.
+        queued_urls: set[str] = {normalize_url(root_url)}
 
         while frontier:
-            if actions_taken >= self._budget.max_actions:
+            if visited_count >= self._budget.max_actions:
                 result.budget_exhausted_by = "max_actions"
                 break
             if time.monotonic() >= deadline:
@@ -98,6 +108,8 @@ class Explorer:
                 continue
             self._seen_hash_counts[state.dom_hash] = seen + 1
             result.states.append(state)
+            if depth > 0:
+                visited_count += 1
 
             page_model = await self._modeler.model(self._session.page)
             result.visited.append((state, page_model))
@@ -109,9 +121,13 @@ class Explorer:
                 continue
 
             for raw in await self._modeler.discover_actions(self._session.page):
-                if actions_taken >= self._budget.max_actions:
-                    result.budget_exhausted_by = "max_actions"
+                if len(frontier) >= _FRONTIER_SAFETY_CAP:
                     break
+                if raw["kind"] == ActionKind.LINK.value and raw.get("href"):
+                    norm = normalize_url(raw["href"])
+                    if norm in queued_urls:
+                        continue
+                    queued_urls.add(norm)
                 action = CrawlAction(
                     kind=ActionKind(raw["kind"]),
                     selector=raw["selector"],
@@ -123,7 +139,6 @@ class Explorer:
                     result.skipped_destructive.append(action)
                     _log.info("destructive_skipped", selector=action.selector, label=action.label)
                     continue
-                actions_taken += 1
                 frontier.append(([*path, action], depth + 1))
 
         if result.budget_exhausted_by is not None and frontier:
