@@ -1,0 +1,59 @@
+[project]
+name = "qai"
+version = "0.1.0"
+description = "Autonomous web-form fuzzer that finds a bug and points at the line of code where it lives — self-hosted, no AI/paid APIs."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "qai" }]
+keywords = ["testing", "playwright", "fuzzing", "qa", "cdp", "code-intelligence", "mcp"]
+dependencies = [
+    "playwright>=1.48",
+    "pydantic>=2.9",
+    "structlog>=24.4",
+    "rich>=13.9",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2"]
+demo = ["fastapi>=0.115", "uvicorn[standard]>=0.32"]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "ruff>=0.7",
+    "mypy>=1.13",
+]
+
+[project.scripts]
+qai = "qai.cli:main"
+qai-mcp = "qai.mcp_server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["qai"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# Embedded JS template literal — wrapping would hurt readability of the injected script.
+"qai/engine/modeler.py" = ["E501"]
+# Ambiguous-unicode fuzz payload is deliberate — it's the case under test, not a typo.
+"qai/engine/fuzzer/strategies.py" = ["RUF001"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
