@@ -57,6 +57,21 @@ _SELECTOR_FOR_JS = r"""
   };
 """
 
+# Shared by both scripts: aria-hidden/CSS-hidden "focus catcher" clones are real DOM
+# nodes our selectors can match, but the executor can never fill/click them —
+# Playwright times out (3-5s per attempt) on every fuzz case against one, silently
+# burning most of a run's time budget (found live on a real site's mobile-header
+# search clone: ~25 malicious cases each timed out on an invisible element).
+_IS_VISIBLE_JS = r"""
+  const isVisible = (el) => {
+    if (el.getAttribute('aria-hidden') === 'true' || el.hasAttribute('hidden')) return false;
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 || rect.height > 0;
+  };
+"""
+
 # Runs in the page: returns a plain JSON tree of forms + fields with a stable selector each.
 _EXTRACT_JS = (
     r"""
@@ -64,6 +79,7 @@ _EXTRACT_JS = (
   const cssEscape = (s) => (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
 """
     + _SELECTOR_FOR_JS
+    + _IS_VISIBLE_JS
     + r"""
   const labelFor = (el) => {
     if (el.id) {
@@ -108,8 +124,10 @@ _EXTRACT_JS = (
     return Array.from(el.options).map(o => o.value).filter(v => v !== '');
   }
   const isControl = (el) => ['input','select','textarea'].includes(el.tagName.toLowerCase())
-      && !['hidden','submit','button','reset','image'].includes((el.getAttribute('type')||'').toLowerCase());
+      && !['hidden','submit','button','reset','image'].includes((el.getAttribute('type')||'').toLowerCase())
+      && isVisible(el);
   const isSubmitLike = (el) => {
+    if (!isVisible(el)) return false;
     const tag = el.tagName.toLowerCase();
     if (tag === 'input' && (el.getAttribute('type')||'').toLowerCase() === 'submit') return true;
     if (tag === 'button' && (el.getAttribute('type')||'').toLowerCase() !== 'reset') return true;
@@ -182,15 +200,16 @@ _DISCOVER_ACTIONS_JS = (
   const cssEscape = (s) => (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
 """
     + _SELECTOR_FOR_JS
+    + _IS_VISIBLE_JS
     + r"""
   const labelOf = (el) => (el.innerText || el.getAttribute('aria-label') || el.value || '').trim();
-  const links = Array.from(document.querySelectorAll('a[href]')).map(el => {
+  const links = Array.from(document.querySelectorAll('a[href]')).filter(isVisible).map(el => {
     let abs = null;
     try { abs = new URL(el.getAttribute('href'), location.href).href; } catch (e) { abs = null; }
     return { kind: 'link', selector: selectorFor(el), label: labelOf(el), href: abs };
   }).filter(l => l.href && l.href.startsWith('http'));
   const buttons = Array.from(document.querySelectorAll('button,[role="button"],input[type="submit"]'))
-      .filter(el => !el.closest('form'))
+      .filter(el => !el.closest('form') && isVisible(el))
       .map(el => ({ kind: 'button', selector: selectorFor(el), label: labelOf(el), href: null }));
   return [...links, ...buttons];
 }

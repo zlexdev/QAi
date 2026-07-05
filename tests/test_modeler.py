@@ -30,3 +30,28 @@ async def test_range_input_is_modeled_as_number_field() -> None:
     assert field.kind is FieldKind.NUMBER
     assert field.constraints.minimum == 1
     assert field.constraints.maximum == 200
+
+
+_HIDDEN_CLONE_HTML = """<!doctype html>
+<html><body>
+<form id="search-form">
+  <input id="real" type="text" name="q" aria-label="Search">
+  <input id="clone" type="text" name="q_clone" tabindex="-1" aria-hidden="true">
+  <input id="cssHidden" type="text" name="q_css" style="display:none">
+  <button type="submit">Go</button>
+</form>
+</body></html>"""
+
+
+async def test_aria_hidden_and_css_hidden_fields_are_excluded() -> None:
+    """A visually-hidden 'focus catcher' clone is a real DOM node the executor can
+    never fill/click — Playwright times out on every fuzz case against it, burning
+    most of a run's time budget on one broken field (found live on a real site's
+    mobile-header search clone)."""
+    async with CaptureSession(headless=True, run_id="test") as session:
+        await session.page.set_content(_HIDDEN_CLONE_HTML)
+        model = await PageModeler().model(session.page)
+
+    assert len(model.forms) == 1
+    names = {f.name for f in model.forms[0].fields}
+    assert names == {"q"}
