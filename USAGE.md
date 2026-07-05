@@ -44,6 +44,11 @@ qai <url> [options]
 | `--har DIR` | none | Record one `.har` per tab into this directory |
 | `--direct` | off | After one baseline UI submit per form, fuzz the rest straight over HTTP |
 | `--i-own-this-target` | off | Required to actually submit anything against a **non-local** host |
+| `--crawl` | off | Discover same-origin pages (BFS) and fuzz every form found, not just `<url>` |
+| `--max-depth N` | `2` | Crawl: max BFS depth |
+| `--max-actions N` | `50` | Crawl: max links/buttons followed |
+| `--wall-clock S` | `180` | Crawl: overall time budget in seconds |
+| `--allow-destructive SELECTOR` | none | Repeatable — allow clicking a specific destructive-looking selector during a crawl |
 
 Exit code: `0` if no findings, `2` if findings exist, `1` on a `QaiError` (bad URL,
 missing repo path, capture failure after retry).
@@ -98,14 +103,17 @@ uv run qai https://staging.example.com --repo ~/code/example --i-own-this-target
 ### Parallel tabs (`--parallel N`)
 
 Fuzz cases for all forms on the page are partitioned round-robin across `N`
-independent worker sessions. Each worker owns its own browser context/page and is
-tagged `tab-0`, `tab-1`, … — every `Finding` and its underlying `EffectBundle` carry
-that `tab_id`, so you can stitch a tab's console log / requests back into one story
-later (e.g. when grepping a `.har` for the same tab).
+independent worker sessions. Each worker owns its own `BrowserContext`+page (**not** a
+separate Chromium process — all tabs in one `run_scan`/`run_crawl` call share a single
+launched browser via a `BrowserPool`) and is tagged `tab-0`, `tab-1`, … — every
+`Finding` and its underlying `EffectBundle` carry that `tab_id`, so you can stitch a
+tab's console log / requests back into one story later (e.g. when grepping a `.har`
+for the same tab).
 
-Cost/benefit: more tabs = more wall-clock throughput, but each tab is a real browser
-context (memory + a CPU-bound JS engine). Start at 3–5 and watch resource usage before
-going higher.
+Cost/benefit: more tabs = more wall-clock throughput (measured: 26 cases against the
+demo target, 60s at 1 tab → 24.6s at 3 tabs), but each tab is still a real page/JS
+context inside the shared browser. Start at 3–5 and watch resource usage before going
+higher.
 
 ### Direct-request fast path (`--direct`)
 
@@ -125,6 +133,36 @@ sidesteps this: the *server* sees exactly what QAi sends, byte for byte.
 When it can't learn a template (multipart forms, JSON bodies, CSRF tokens, duplicate
 field values, hashed/computed fields) it silently falls back to the UI path for that
 form — you always get results, just not always the speed-up.
+
+### Crawl mode (`--crawl`)
+
+Discovers same-origin pages reachable from `<url>` (BFS, shallow-first) and fuzzes
+every form found along the way, instead of only the one page you pointed it at.
+
+- **State identity** is (normalized URL, structural DOM hash) — a hash of tags/roles/
+  hierarchy only, never text or timestamps, so a paginated list or a live clock doesn't
+  look like infinitely many new states.
+- **Replay**: reaching a state found deep in the crawl means re-navigating from the
+  root and replaying the recorded action path (links replay via direct navigation;
+  SPA-only button clicks replay via click) — a URL alone can't identify SPA in-memory
+  state.
+- **Budgets** stop the crawl: `--max-depth`, `--max-actions`, `--wall-clock`. Hitting
+  one is reported as `budget_exhausted_by` in the JSON report, not a silent truncation.
+- **Trap detection**: a state whose DOM hash repeats `CrawlBudget.trap_repeat_limit`
+  times (default 3) stops being expanded further — guards against infinite
+  calendars/paginations that would otherwise exhaust the action budget on one trap.
+- **Destructive-action guard**: links/buttons whose visible text matches a keyword
+  heuristic (EN+RU: delete/pay/withdraw/transfer/удалить/оплатить/вывести/перевести/...)
+  are never clicked — see `CrawlReport.skipped_destructive`. This is a heuristic, not a
+  security guarantee; review it yourself before assuming nothing destructive was
+  touched. Use `--allow-destructive SELECTOR` (repeatable) to explicitly permit one.
+- Each discovered page with a form gets its own `RunReport` under `CrawlReport.pages`;
+  `CrawlReport.findings` flattens all of them for convenience.
+
+```bash
+uv run qai https://staging.example.com --repo ~/code/example --i-own-this-target \
+  --crawl --max-depth 3 --max-actions 100 --wall-clock 300 --json crawl-report.json
+```
 
 ### HAR recording (`--har DIR`)
 
@@ -195,19 +233,21 @@ uv run qai-mcp
 ```
 
 Point your MCP client (Claude Code, another agent harness) at `qai-mcp` over stdio.
-Two tools:
+Three tools:
 
 - **`qa_scan(url, repo_path=None, headless=True, parallel=1, har_dir=None, own_target=False, direct_mode=False)`**
   → JSON `RunReport`.
 - **`qa_scan_html(url, repo_path=None, out_path="qai-report.html", headless=True, parallel=1, own_target=False)`**
   → JSON summary + a written HTML report path.
+- **`qa_crawl(url, repo_path=None, headless=True, max_depth=2, max_actions=50, wall_clock_seconds=180, allow_destructive=None, parallel=1, own_target=False, direct_mode=False)`**
+  → JSON `CrawlReport` (BFS-discovered pages, each fuzzed; see Crawl mode above).
 
 `own_target` is the MCP equivalent of `--i-own-this-target` — an agent can call
-`qa_scan` against any URL and safely get a read-only page model back; it must
-explicitly pass `own_target=True` to get a real fuzz run against a non-local host.
-This means an agent can be handed `qa_scan` without a human reviewing every call — the
-worst case of a mis-aimed scan is an inventory, not a payload storm against a stranger's
-site.
+`qa_scan`/`qa_crawl` against any URL and safely get a read-only page model back; it
+must explicitly pass `own_target=True` to get a real fuzz run against a non-local host.
+This means an agent can be handed these tools without a human reviewing every call —
+the worst case of a mis-aimed scan is an inventory, not a payload storm against a
+stranger's site.
 
 Example MCP client config entry (stdio transport):
 
