@@ -33,6 +33,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo", default=None, help="Path to the target's source repo")
     parser.add_argument("--json", dest="json_out", default=None, help="Write JSON report here")
     parser.add_argument("--html", dest="html_out", default=None, help="Write HTML report here")
+    parser.add_argument(
+        "--report-dir",
+        default="qai-reports",
+        help="Auto-generated .json + .md report directory (default: ./qai-reports)",
+    )
+    parser.add_argument(
+        "--no-auto-report",
+        dest="auto_report",
+        action="store_false",
+        help="Disable the automatic .json/.md report written to --report-dir on every run",
+    )
     parser.add_argument("--headed", action="store_true", help="Run the browser headed")
     parser.add_argument("--verbose", action="store_true", help="Debug-level logging")
     parser.add_argument(
@@ -157,6 +168,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.html_out:
         reporter.write_html(report, Path(args.html_out))
         console.print(f"[dim]HTML written to {args.html_out}[/dim]")
+
+    if args.auto_report:
+        report_dir = Path(args.report_dir)
+        report_dir.mkdir(parents=True, exist_ok=True)
+        json_path = report_dir / f"{report.run_id}.json"
+        md_path = report_dir / f"{report.run_id}.md"
+        reporter.write_json(report, json_path)
+        reporter.write_markdown(report, md_path)
+        console.print(f"[dim]Report saved: {json_path}, {md_path}[/dim]")
 
     return 0 if report.ok else 2
 

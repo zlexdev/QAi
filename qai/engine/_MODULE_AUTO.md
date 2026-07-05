@@ -36,6 +36,8 @@ _CF_POLL_MS = 500
 _CF_TITLE_MARKERS = …
 _ERROR_SELECTOR = …
 
+cls BrowserPool: playwright: Playwright, browser: Browser
+
 cls CaptureSession
   __init__() -> None
   page() -> Page
@@ -44,6 +46,8 @@ cls CaptureSession
   async open(url: str) -> None
   async capture(action_id: str, action: Callable[[], Awaitable[None) -> EffectBundle
     # Run ``action`` and return everything observed while it executed.
+
+_origin_of(url: str) -> str
 
 _truncate_body(body: str?) -> str | None
 
@@ -97,6 +101,12 @@ cls FormModel(BaseModel)
 
 cls PageModel(BaseModel)
 
+cls StateRef(BaseModel)
+
+cls ActionKind(StrEnum): LINK, BUTTON, FORM_SUBMIT
+
+cls CrawlAction(BaseModel)
+
 cls FuzzCase(BaseModel)
 
 cls SourceRef(BaseModel)
@@ -109,6 +119,16 @@ cls RequestTemplate(BaseModel)
 cls RunReport(BaseModel)
   # Top-level result of one scan — the machine output consumed by CLI/MCP/CI.
   ok() -> bool
+
+cls CrawlBudget(BaseModel)
+
+cls CrawlReport(BaseModel)
+  # Aggregates every visited state's RunReport plus the discovered state graph.
+  findings() -> list[Finding]
+  ok() -> bool
+  target_url() -> str
+  forms_scanned() -> int
+  cases_executed() -> int
 
 ```
 
@@ -199,6 +219,21 @@ cls FormExecutor
 
 ```
 
+## explorer.py
+```
+# Explorer — the state-graph crawler's outer loop.
+
+_CLICK_SETTLE_MS = 500
+
+cls ExplorerResult: visited: list[tuple[StateRef, PageModel]], states: list[StateRef], skipped_destructive: list[CrawlAction], budget_exhausted_by: str | None
+
+cls Explorer
+  # Crawls same-origin states reachable from a root URL, within a CrawlBudget.
+  __init__(session: CaptureSession, budget: CrawlBudget) -> None
+  async crawl(root_url: str) -> ExplorerResult
+
+```
+
 ## logging.py
 ```
 # structlog configuration — run_id bound at entry, threaded through the whole crawl.
@@ -216,10 +251,12 @@ get_logger(name: str) -> structlog.stdlib.BoundLogger
 # PageModeler — inventory of fields, types and form groups from a live page.
 
 _EXTRACT_JS = …
+_DISCOVER_ACTIONS_JS = …
 
 cls PageModeler
   # Extracts a typed :class:`PageModel` from a loaded Playwright page.
   async model(page: Page) -> PageModel
+  async discover_actions(page: Page) -> list[dict[str, Any]]
 
 _kind(raw: str?) -> FieldKind
 
@@ -239,17 +276,30 @@ _SEVERITY_ORDER = …
 _SEVERITY_COLOR = …
 
 cls Reporter
-  print_table(report: RunReport, console: Console? = None) -> None
-  write_json(report: RunReport, path: Path) -> None
-  write_html(report: RunReport, path: Path) -> None
+  print_table(report: ScanReport, console: Console? = None) -> None
+  write_json(report: ScanReport, path: Path) -> None
+  write_html(report: ScanReport, path: Path) -> None
 
 _severity_key(finding: Finding) -> int
 
-_render_html(report: RunReport) -> str
+_render_html(report: ScanReport) -> str
 
-_table_or_empty(report: RunReport, rows: str) -> str
+_table_or_empty(report: ScanReport, rows: str) -> str
 
 _finding_row(f: Finding) -> str
+
+```
+
+## risk.py
+```
+# Destructive-action classifier — a heuristic, not a security guarantee.
+
+_DESTRUCTIVE_KEYWORDS = …
+
+is_destructive(label: str?) -> bool
+  # True if ``label`` (button text / aria-label) matches a destructive keyword.
+
+is_allowlisted(selector: str, allowlist: frozenset[str) -> bool
 
 ```
 
@@ -263,11 +313,28 @@ validate_url(url: str) -> str
 
 async run_scan(url: str, repo_path: str? = None) -> RunReport
 
-async _recon(url: str, headless: bool, run_id: str) -> PageModel
+async _recon(url: str, run_id: str, pool: BrowserPool, stability_cache: dict[str, float) -> PageModel
   # One-off session that only models the page — never fills or submits anything.
 
-async _run_worker(url: str, bucket: list[WorkItem, tab_index: int, run_id: str, headless: bool, har_dir: str?, correlator: CodeCorrelator?, har_paths: list[str, direct_mode: bool, templates: dict[str, RequestTemplate?) -> list[Finding]
+async _fuzz_page_model() -> tuple[list[Finding], int, int, list[str]]
+
+async _run_worker(url: str, bucket: list[WorkItem, tab_index: int, run_id: str, headless: bool, har_dir: str?, correlator: CodeCorrelator?, har_paths: list[str, direct_mode: bool, templates: dict[str, RequestTemplate?, pool: BrowserPool, stability_cache: dict[str, float) -> list[Finding]
 
 _learn_from_effect(form: FormModel, effect: EffectBundle) -> RequestTemplate | None
+
+async run_crawl(url: str, repo_path: str? = None) -> CrawlReport
+
+```
+
+## state.py
+```
+# State identity for the crawler — a URL alone can't identify an SPA's in-memory
+
+_STRUCTURAL_SIGNATURE_JS = …
+
+normalize_url(url: str) -> str
+  # Strip fragment (SPA router hash aside) and trailing slash for stable comparison.
+
+async compute_state(page: Page, checkpoint_id: str = 'root') -> StateRef
 
 ```

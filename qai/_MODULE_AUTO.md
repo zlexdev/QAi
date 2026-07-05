@@ -6,7 +6,7 @@
 ## Submodules
 
 - [`demo_target/`](demo_target\_MODULE_AUTO.md) (1 py, 2 fn)
-- [`engine/`](engine\_MODULE_AUTO.md) (13 py, 46 cls, 27 fn)
+- [`engine/`](engine\_MODULE_AUTO.md) (16 py, 54 cls, 34 fn)
 
 ## cli.py
 ```
@@ -33,6 +33,8 @@ _resolve_safe_mode(url: str, own_target: bool) -> bool
 async qa_scan(url: str, repo_path: str? = None, headless: bool = True, parallel: int = 1, har_dir: str? = None, own_target: bool = False, direct_mode: bool = False) -> str
 
 async qa_scan_html(url: str, repo_path: str? = None, out_path: str = 'qai-report.html', headless: bool = True, parallel: int = 1, own_target: bool = False) -> str
+
+async qa_crawl(url: str, repo_path: str? = None, headless: bool = True, max_depth: int = 2, max_actions: int = 50, wall_clock_seconds: int = 180, allow_destructive: list[str]? = None, parallel: int = 1, own_target: bool = False, direct_mode: bool = False) -> str
 
 main() -> None
 

@@ -36,8 +36,10 @@ qai <url> [options]
 |---|---|---|
 | `<url>` | — | Target to scan (positional, required) |
 | `--repo PATH` | none | Path to the target's source repo — enables `file:line` correlation |
-| `--json PATH` | none | Write the machine-readable `RunReport` as JSON |
+| `--json PATH` | none | Write the machine-readable `RunReport` as JSON (in addition to the auto-saved copy) |
 | `--html PATH` | none | Write the self-contained dark-themed HTML report |
+| `--report-dir DIR` | `qai-reports` | Where the auto-saved `.json`/`.md` report goes every run — see [REPORTS.md](REPORTS.md) |
+| `--no-auto-report` | off | Disable the automatic `.json`/`.md` report |
 | `--headed` | off | Run the browser headed (visible window) instead of headless |
 | `--verbose` | off | Debug-level structlog output |
 | `--parallel N` | `1` | Fan fuzz cases across N concurrent worker sessions ("tabs"), each tagged `tab-<i>` |
@@ -191,9 +193,20 @@ the form's own `method` attribute (default `POST`) — this filters out unrelate
 background traffic (nav-link prefetches, analytics beacons) that a time-windowed
 capture would otherwise misattribute to the fuzz action.
 
+**Malicious payload catalogue** (`qai/engine/fuzzer/strategies.py`): SQL injection,
+XSS, path traversal (raw + URL-encoded + Windows-style), template injection (`${{}}`/
+`{{}}`/`#{}`/`<%= %>`), NoSQL operator injection, OS command injection, CRLF/header
+injection, null-byte truncation, LDAP injection, plus numeric edge cases (32/64-bit
+integer boundaries, `NaN`/`Infinity`, leading-zero octal confusion, hex/scientific
+notation a strict int field should reject). Every field gets the full text-payload set;
+number fields get the numeric set on top of their min/max-derived boundary cases.
+
 ### Reports
 
 - **Terminal**: a `rich` table, severity-colored, sorted high→low.
+- **Auto-saved every run**: `.json` + `.md` under `--report-dir` (default
+  `./qai-reports/<run_id>.{json,md}`) — no flag needed; disable with `--no-auto-report`.
+  Full breakdown in [REPORTS.md](REPORTS.md).
 - **`--json`**: the full `RunReport` (`run_id`, `forms_scanned`, `cases_executed`,
   `tabs_used`, `har_paths`, `safe_mode`, `findings[]`) — feed this to CI.
 - **`--html`**: a self-contained dark-themed page (inline CSS, no external assets) with

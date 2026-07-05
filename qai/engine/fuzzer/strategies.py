@@ -21,11 +21,38 @@ from qai.engine.contracts import (
 
 _OVERFLOW_LEN = 100_000
 _MALICIOUS = [
+    # SQL injection
     "' OR '1'='1",
-    "<script>alert(1)</script>",
     "'; DROP TABLE users;--",
+    "1' UNION SELECT NULL,NULL,NULL--",
+    # XSS
+    "<script>alert(1)</script>",
+    "<img src=x onerror=alert(1)>",
+    "javascript:alert(1)",
+    # Path traversal — raw and URL-encoded (a validator that only blocks "../" misses this)
     "../../../../etc/passwd",
+    "..%2f..%2f..%2f..%2fetc%2fpasswd",
+    "..\\..\\..\\..\\windows\\win.ini",
+    # Template injection — different engines use different delimiters
     "${{7*7}}",
+    "{{7*7}}",
+    "#{7*7}",
+    "<%= 7*7 %>",
+    # NoSQL injection (MongoDB-style operators reaching a query unescaped)
+    '{"$ne": null}',
+    '{"$gt": ""}',
+    # OS command injection
+    "; whoami",
+    "$(whoami)",
+    "`id`",
+    "| cat /etc/passwd",
+    # CRLF / header injection — a value later echoed into a response header
+    "value\r\nSet-Cookie: injected=1",
+    "value\nX-Injected: true",
+    # Null byte — truncates C-string-backed validators/file paths downstream
+    "valid\x00.jpg",
+    # LDAP injection
+    "*)(uid=*))(|(uid=*",
 ]
 # Mathematical double-struck X, emoji, a right-to-left override char, and a BOM —
 # the unicode edge cases a naive byte-length or ASCII-only validator chokes on.
@@ -125,6 +152,23 @@ class NumberStrategy(FieldFuzzStrategy):
                 expect=ExpectedOutcome.REJECT_GRACEFULLY
             ),
             FuzzCase(value="1e309", intent=FuzzIntent.OVERFLOW, expect=ExpectedOutcome.REJECT_GRACEFULLY),
+            # Signed 32/64-bit integer boundaries — a backend storing this in a fixed-
+            # width column silently wraps/truncates right past these, unlike Python's
+            # arbitrary-precision ints which happily accept anything.
+            FuzzCase(value="2147483648", intent=FuzzIntent.BOUNDARY, expect=ExpectedOutcome.EITHER),
+            FuzzCase(value="-2147483649", intent=FuzzIntent.BOUNDARY, expect=ExpectedOutcome.EITHER),
+            FuzzCase(value="9223372036854775808", intent=FuzzIntent.BOUNDARY, expect=ExpectedOutcome.EITHER),
+            # IEEE-754 special values — a naive `float(x)` parser accepts these as valid
+            # numbers, but they usually break arithmetic/comparisons/serialization downstream.
+            FuzzCase(value="NaN", intent=FuzzIntent.MALICIOUS, expect=ExpectedOutcome.REJECT_GRACEFULLY),
+            FuzzCase(value="Infinity", intent=FuzzIntent.MALICIOUS, expect=ExpectedOutcome.REJECT_GRACEFULLY),
+            FuzzCase(value="-0", intent=FuzzIntent.BOUNDARY, expect=ExpectedOutcome.EITHER),
+            # Leading zeros can be misread as octal by a loose parser (e.g. "010" -> 8).
+            FuzzCase(value="0010", intent=FuzzIntent.MALICIOUS, expect=ExpectedOutcome.EITHER),
+            # Numeric-looking but not: hex/scientific notation a strict int-only field
+            # should reject, not silently coerce.
+            FuzzCase(value="0x2A", intent=FuzzIntent.MALICIOUS, expect=ExpectedOutcome.REJECT_GRACEFULLY),
+            FuzzCase(value="1e5", intent=FuzzIntent.MALICIOUS, expect=ExpectedOutcome.EITHER),
         ]
         return cases
 

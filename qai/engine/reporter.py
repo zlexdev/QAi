@@ -66,6 +66,9 @@ class Reporter:
     def write_html(self, report: ScanReport, path: Path) -> None:
         path.write_text(_render_html(report), encoding="utf-8")
 
+    def write_markdown(self, report: ScanReport, path: Path) -> None:
+        path.write_text(_render_markdown(report), encoding="utf-8")
+
 
 _SEVERITY_ORDER = {Severity.HIGH: 0, Severity.MEDIUM: 1, Severity.LOW: 2}
 _SEVERITY_COLOR = {Severity.HIGH: "#f85149", Severity.MEDIUM: "#d29922", Severity.LOW: "#58a6ff"}
@@ -138,6 +141,34 @@ def _table_or_empty(report: ScanReport, rows: str) -> str:
 {rows}
   </tbody>
 </table>"""
+
+
+def _render_markdown(report: ScanReport) -> str:
+    status = "PASS" if report.ok else "FAIL"
+    lines = [
+        f"# QAi scan report `{report.run_id}`",
+        "",
+        f"- **Target**: {report.target_url}",
+        f"- **Status**: {status}",
+        f"- **Forms scanned**: {report.forms_scanned}",
+        f"- **Cases executed**: {report.cases_executed}",
+        f"- **Findings**: {len(report.findings)}",
+        "",
+    ]
+    if not report.findings:
+        lines.append("No findings — every case behaved as expected.")
+        return "\n".join(lines) + "\n"
+
+    lines.append("| Severity | Kind | Field | Intent | Detail | Source |")
+    lines.append("|---|---|---|---|---|---|")
+    for f in sorted(report.findings, key=_severity_key):
+        source = f"{f.source_location.file}:{f.source_location.line}" if f.source_location else "-"
+        detail = f.detail.replace("|", "\\|").replace("\n", " ")
+        lines.append(
+            f"| {f.severity.value} | {f.kind.value} | `{f.field_selector or '-'}` "
+            f"| {f.intent.value if f.intent else '-'} | {detail} | `{source}` |"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _finding_row(f: Finding) -> str:

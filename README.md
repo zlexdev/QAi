@@ -4,8 +4,8 @@ Autonomous web-form fuzzer. Give it a `URL` + a repo, it finds a bug in a form
 (5xx / console-error under fuzzing) and points at the exact `file:line` in your
 backend where it lives — no manual test writing, no AI/paid APIs.
 
-Full usage guide: **[USAGE.md](USAGE.md)**. Architecture background: [PLAN.md](PLAN.md) /
-[mini-plat.md](mini-plat.md).
+Full usage guide: **[docs/USAGE.md](docs/USAGE.md)**. Architecture background:
+[PLAN.md](PLAN.md) / [mini-plat.md](mini-plat.md).
 
 ```
 URL → page model (fields+types) → fuzz matrix per form → capture effects
@@ -128,7 +128,8 @@ action guard) is intentionally out of scope for this release.
 
 ## See also
 
-- [USAGE.md](USAGE.md) — full CLI/library/MCP reference, troubleshooting, safety model
+- [docs/USAGE.md](docs/USAGE.md) — full CLI/library/MCP reference, troubleshooting, safety model
+- [docs/REPORTS.md](docs/REPORTS.md) — report formats (JSON/HTML/Markdown) and auto-save
 - [PLAN.md](PLAN.md) — MVP phase breakdown (Phases 0–3) and the CUT-list
 - [mini-plat.md](mini-plat.md) — the full architecture this project instantiates
 
