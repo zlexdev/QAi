@@ -21,6 +21,8 @@ from pathlib import Path
 from qai.engine.analyzer import Analyzer
 from qai.engine.capture import CaptureSession
 from qai.engine.contracts import (
+    CrawlBudget,
+    CrawlReport,
     EffectBundle,
     Finding,
     FormModel,
@@ -34,6 +36,7 @@ from qai.engine.correlator import CodeCorrelator, build_route_table, require_rep
 from qai.engine.direct_executor import DirectExecutor, learn_template
 from qai.engine.errors import InvalidTargetError
 from qai.engine.executor import FormExecutor
+from qai.engine.explorer import Explorer
 from qai.engine.fuzzer.generator import DataGenerator, FuzzPlan
 from qai.engine.logging import get_logger
 from qai.engine.modeler import PageModeler
@@ -218,3 +221,68 @@ def _learn_from_effect(form: FormModel, effect: EffectBundle) -> RequestTemplate
         if template is not None:
             return template
     return None
+
+
+async def run_crawl(
+    url: str,
+    repo_path: str | None = None,
+    *,
+    headless: bool = True,
+    budget: CrawlBudget | None = None,
+    allowlist: frozenset[str] = frozenset(),
+    max_parallel: int = 1,
+    har_dir: str | None = None,
+    safe_mode: bool = False,
+    direct_mode: bool = False,
+) -> CrawlReport:
+    """Phase 4: discover same-origin states reachable from ``url`` (BFS, budgeted),
+    then run the Phase 0-3 fuzz pipeline against every discovered page that has a form.
+
+    Destructive-looking links/buttons (keyword heuristic, see ``qai.engine.risk``) are
+    never clicked unless their selector is in ``allowlist`` — see ``CrawlReport.
+    skipped_destructive`` for what was skipped. ``safe_mode``/``direct_mode``/
+    ``max_parallel``/``har_dir`` apply to each discovered page exactly as they do to a
+    single ``run_scan`` call.
+    """
+    root = validate_url(url)
+    run_id = uuid.uuid4().hex[:12]
+    started_at = datetime.now(UTC)
+    active_budget = budget or CrawlBudget()
+
+    async with CaptureSession(headless=headless, run_id=run_id, tab_id="explorer") as session:
+        explorer = Explorer(session, active_budget, allowlist=allowlist)
+        result = await explorer.crawl(root)
+
+    pages: list[RunReport] = [
+        await run_scan(
+            state.normalized_url,
+            repo_path,
+            headless=headless,
+            max_parallel=max_parallel,
+            har_dir=har_dir,
+            safe_mode=safe_mode,
+            direct_mode=direct_mode,
+        )
+        for state, page_model in result.visited
+        if page_model.forms
+    ]
+
+    report = CrawlReport(
+        run_id=run_id,
+        root_url=root,
+        started_at=started_at,
+        finished_at=datetime.now(UTC),
+        states_visited=result.states,
+        pages=pages,
+        skipped_destructive=result.skipped_destructive,
+        budget_exhausted_by=result.budget_exhausted_by,
+    )
+    _log.info(
+        "crawl_complete",
+        run_id=run_id,
+        states=len(result.states),
+        pages_with_forms=len(pages),
+        skipped_destructive=len(result.skipped_destructive),
+        findings=len(report.findings),
+    )
+    return report

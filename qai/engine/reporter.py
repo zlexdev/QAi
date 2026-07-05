@@ -12,7 +12,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from qai.engine.contracts import Finding, RunReport, Severity
+from qai.engine.contracts import Finding, ScanReport, Severity
 
 
 def _severity_key(finding: Finding) -> int:
@@ -28,7 +28,7 @@ _SEVERITY_DOT = {Severity.HIGH: "●", Severity.MEDIUM: "●", Severity.LOW: "�
 
 
 class Reporter:
-    def print_table(self, report: RunReport, console: Console | None = None) -> None:
+    def print_table(self, report: ScanReport, console: Console | None = None) -> None:
         console = console or Console(legacy_windows=False)
         table = Table(title=f"qai run {report.run_id} — {report.target_url}")
         table.add_column("Sev")
@@ -60,10 +60,10 @@ class Reporter:
         style = "bold green" if report.ok else "bold red"
         console.print(f"[{style}]{summary}[/{style}]")
 
-    def write_json(self, report: RunReport, path: Path) -> None:
+    def write_json(self, report: ScanReport, path: Path) -> None:
         path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
 
-    def write_html(self, report: RunReport, path: Path) -> None:
+    def write_html(self, report: ScanReport, path: Path) -> None:
         path.write_text(_render_html(report), encoding="utf-8")
 
 
@@ -71,7 +71,7 @@ _SEVERITY_ORDER = {Severity.HIGH: 0, Severity.MEDIUM: 1, Severity.LOW: 2}
 _SEVERITY_COLOR = {Severity.HIGH: "#f85149", Severity.MEDIUM: "#d29922", Severity.LOW: "#58a6ff"}
 
 
-def _render_html(report: RunReport) -> str:
+def _render_html(report: ScanReport) -> str:
     ordered = sorted(report.findings, key=_severity_key)
     rows = "\n".join(_finding_row(f) for f in ordered)
     status = "PASS" if report.ok else "FAIL"
@@ -129,7 +129,7 @@ def _render_html(report: RunReport) -> str:
 </html>"""
 
 
-def _table_or_empty(report: RunReport, rows: str) -> str:
+def _table_or_empty(report: ScanReport, rows: str) -> str:
     if not report.findings:
         return '<div class="empty">No findings — every case behaved as expected.</div>'
     return f"""<table>

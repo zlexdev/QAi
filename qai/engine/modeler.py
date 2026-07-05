@@ -146,6 +146,31 @@ _EXTRACT_JS = r"""
 """
 
 
+_DISCOVER_ACTIONS_JS = r"""
+() => {
+  const cssEscape = (s) => (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+  const selectorFor = (el) => {
+    if (el.id) return '#' + cssEscape(el.id);
+    const parent = el.parentElement;
+    if (!parent) return el.tagName.toLowerCase();
+    const same = Array.from(parent.children).filter(c => c.tagName === el.tagName);
+    const idx = same.indexOf(el) + 1;
+    return el.tagName.toLowerCase() + ':nth-of-type(' + idx + ')';
+  };
+  const labelOf = (el) => (el.innerText || el.getAttribute('aria-label') || el.value || '').trim();
+  const links = Array.from(document.querySelectorAll('a[href]')).map(el => {
+    let abs = null;
+    try { abs = new URL(el.getAttribute('href'), location.href).href; } catch (e) { abs = null; }
+    return { kind: 'link', selector: selectorFor(el), label: labelOf(el), href: abs };
+  }).filter(l => l.href && l.href.startsWith('http'));
+  const buttons = Array.from(document.querySelectorAll('button,[role="button"],input[type="submit"]'))
+      .filter(el => !el.closest('form'))
+      .map(el => ({ kind: 'button', selector: selectorFor(el), label: labelOf(el), href: null }));
+  return [...links, ...buttons];
+}
+"""
+
+
 class PageModeler:
     """Extracts a typed :class:`PageModel` from a loaded Playwright page."""
 
@@ -154,6 +179,12 @@ class PageModeler:
         forms = [self._form(f) for f in raw if f.get("fields")]
         _log.info("page_modeled", url=page.url, forms=len(forms))
         return PageModel(url=page.url, forms=forms)
+
+    async def discover_actions(self, page: Page) -> list[dict[str, Any]]:
+        """Links + standalone buttons (not inside a `<form>`) — candidates for the
+        crawler to follow. Form submits are handled by the fuzzing pass instead."""
+        result: list[dict[str, Any]] = await page.evaluate(_DISCOVER_ACTIONS_JS)
+        return result
 
     def _form(self, data: dict[str, Any]) -> FormModel:
         group_id = str(data["groupId"])

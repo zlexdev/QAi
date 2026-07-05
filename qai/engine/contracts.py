@@ -189,6 +189,31 @@ class PageModel(BaseModel):
     forms: list[FormModel] = Field(default_factory=list)
 
 
+class StateRef(BaseModel):
+    """A crawled state's identity — a URL alone isn't enough for SPAs, so identity
+    also carries a structural DOM hash (tags/roles/hierarchy, never text/timestamps)."""
+
+    model_config = _FROZEN
+    normalized_url: str
+    dom_hash: str
+    checkpoint_id: str = "root"
+
+
+class ActionKind(StrEnum):
+    LINK = "link"
+    BUTTON = "button"
+    FORM_SUBMIT = "form_submit"
+
+
+class CrawlAction(BaseModel):
+    model_config = _FROZEN
+    kind: ActionKind
+    selector: str
+    href: str | None = None  # LINK actions replay via direct navigation, not a click
+    label: str | None = None
+    destructive: bool = False
+
+
 class FuzzCase(BaseModel):
     model_config = _FROZEN
     value: str
@@ -252,3 +277,50 @@ class RunReport(BaseModel):
     @property
     def ok(self) -> bool:
         return not self.findings
+
+
+class CrawlBudget(BaseModel):
+    model_config = _FROZEN
+    max_depth: int = 2
+    max_actions: int = 50
+    wall_clock_seconds: int = 180
+    trap_repeat_limit: int = 3
+
+
+class CrawlReport(BaseModel):
+    """Aggregates every visited state's RunReport plus the discovered state graph."""
+
+    model_config = _FROZEN
+    run_id: str
+    root_url: str
+    started_at: datetime
+    finished_at: datetime
+    states_visited: list[StateRef] = Field(default_factory=list)
+    pages: list[RunReport] = Field(default_factory=list)
+    skipped_destructive: list[CrawlAction] = Field(default_factory=list)
+    budget_exhausted_by: str | None = None
+
+    @property
+    def findings(self) -> list[Finding]:
+        return [f for page in self.pages for f in page.findings]
+
+    @property
+    def ok(self) -> bool:
+        return not self.findings
+
+    # Aliases so Reporter (built for RunReport) renders a CrawlReport unchanged.
+    @property
+    def target_url(self) -> str:
+        return self.root_url
+
+    @property
+    def forms_scanned(self) -> int:
+        return sum(p.forms_scanned for p in self.pages)
+
+    @property
+    def cases_executed(self) -> int:
+        return sum(p.cases_executed for p in self.pages)
+
+
+# Reporter renders either shape — CrawlReport exposes the same read surface via aliases.
+ScanReport = RunReport | CrawlReport

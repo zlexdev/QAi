@@ -11,10 +11,11 @@ from urllib.parse import urlparse
 
 from rich.console import Console
 
+from qai.engine.contracts import CrawlBudget, ScanReport
 from qai.engine.errors import QaiError
 from qai.engine.logging import configure_logging
 from qai.engine.reporter import Reporter
-from qai.engine.runner import run_scan
+from qai.engine.runner import run_crawl, run_scan
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
@@ -57,6 +58,28 @@ def build_parser() -> argparse.ArgumentParser:
         "the page (no fill/submit) so an accidental scan of a site you don't control "
         "never sends anything.",
     )
+    parser.add_argument(
+        "--crawl",
+        action="store_true",
+        help="Discover same-origin pages (BFS, budgeted) and fuzz every form found, "
+        "instead of just the given URL. Destructive-looking links/buttons are never "
+        "clicked by default — see --allow-destructive.",
+    )
+    parser.add_argument("--max-depth", type=int, default=2, help="Crawl: max BFS depth")
+    parser.add_argument(
+        "--max-actions", type=int, default=50, help="Crawl: max links/buttons followed"
+    )
+    parser.add_argument(
+        "--wall-clock", type=int, default=180, help="Crawl: overall time budget in seconds"
+    )
+    parser.add_argument(
+        "--allow-destructive",
+        action="append",
+        default=[],
+        metavar="SELECTOR",
+        help="Selector explicitly allowed to be clicked despite looking destructive "
+        "(repeatable). Review qai's destructive keyword heuristic before using this.",
+    )
     return parser
 
 
@@ -78,21 +101,53 @@ def main(argv: list[str] | None = None) -> int:
             "no field will be filled or submitted.[/dim]"
         )
 
+    report: ScanReport
     try:
-        report = asyncio.run(
-            run_scan(
-                args.url,
-                args.repo,
-                headless=not args.headed,
-                max_parallel=args.parallel,
-                har_dir=args.har_dir,
-                safe_mode=safe_mode,
-                direct_mode=args.direct_mode,
+        if args.crawl:
+            budget = CrawlBudget(
+                max_depth=args.max_depth,
+                max_actions=args.max_actions,
+                wall_clock_seconds=args.wall_clock,
             )
-        )
+            report = asyncio.run(
+                run_crawl(
+                    args.url,
+                    args.repo,
+                    headless=not args.headed,
+                    budget=budget,
+                    allowlist=frozenset(args.allow_destructive),
+                    max_parallel=args.parallel,
+                    har_dir=args.har_dir,
+                    safe_mode=safe_mode,
+                    direct_mode=args.direct_mode,
+                )
+            )
+        else:
+            report = asyncio.run(
+                run_scan(
+                    args.url,
+                    args.repo,
+                    headless=not args.headed,
+                    max_parallel=args.parallel,
+                    har_dir=args.har_dir,
+                    safe_mode=safe_mode,
+                    direct_mode=args.direct_mode,
+                )
+            )
     except QaiError as exc:
         console.print(f"[bold red]qai error:[/bold red] {exc}")
         return 1
+
+    if args.crawl:
+        skipped = getattr(report, "skipped_destructive", [])
+        if skipped:
+            console.print(
+                f"[yellow]Skipped {len(skipped)} destructive-looking action(s) — "
+                "see --allow-destructive[/yellow]"
+            )
+        exhausted = getattr(report, "budget_exhausted_by", None)
+        if exhausted:
+            console.print(f"[dim]Crawl stopped early: budget exhausted ({exhausted})[/dim]")
 
     reporter = Reporter()
     reporter.print_table(report, console)

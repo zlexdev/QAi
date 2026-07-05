@@ -13,10 +13,11 @@ from urllib.parse import urlparse
 
 from mcp.server.fastmcp import FastMCP
 
+from qai.engine.contracts import CrawlBudget
 from qai.engine.errors import QaiError
 from qai.engine.logging import configure_logging
 from qai.engine.reporter import Reporter
-from qai.engine.runner import run_scan
+from qai.engine.runner import run_crawl, run_scan
 
 configure_logging()
 mcp = FastMCP("qai")
@@ -109,6 +110,53 @@ async def qa_scan_html(
             "html_report": str(path.resolve()),
         }
     )
+
+
+@mcp.tool()
+async def qa_crawl(
+    url: str,
+    repo_path: str | None = None,
+    headless: bool = True,
+    max_depth: int = 2,
+    max_actions: int = 50,
+    wall_clock_seconds: int = 180,
+    allow_destructive: list[str] | None = None,
+    parallel: int = 1,
+    own_target: bool = False,
+    direct_mode: bool = False,
+) -> str:
+    """Discover same-origin pages (BFS, budgeted) from ``url`` and fuzz every form found.
+
+    Links/buttons whose text matches a destructive keyword (delete/pay/withdraw/transfer/
+    удалить/оплатить/... — see ``qai.engine.risk``) are never clicked unless their
+    selector is in ``allow_destructive``. This is a heuristic, not a security guarantee —
+    review the returned ``skipped_destructive`` list yourself.
+
+    See ``qa_scan`` for the ``own_target``/safe-mode rule — it applies identically here,
+    per discovered page.
+
+    Returns:
+        JSON-encoded CrawlReport: run_id, root_url, states_visited, pages (one RunReport
+        per page with a form), skipped_destructive, budget_exhausted_by, findings[].
+    """
+    safe_mode = _resolve_safe_mode(url, own_target)
+    budget = CrawlBudget(
+        max_depth=max_depth, max_actions=max_actions, wall_clock_seconds=wall_clock_seconds
+    )
+    try:
+        report = await run_crawl(
+            url,
+            repo_path,
+            headless=headless,
+            budget=budget,
+            allowlist=frozenset(allow_destructive or []),
+            max_parallel=parallel,
+            safe_mode=safe_mode,
+            direct_mode=direct_mode,
+        )
+    except QaiError as exc:
+        return json.dumps({"error": str(exc), "error_type": type(exc).__name__})
+    return report.model_dump_json()
 
 
 def main() -> None:
