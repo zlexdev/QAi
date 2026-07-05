@@ -72,7 +72,7 @@ class FormExecutor:
                     el.removeAttribute('pattern');
                     el.removeAttribute('minlength');
                     if (el.tagName.toLowerCase() === 'input'
-                        && ['number','email','date'].includes(el.type)) {
+                        && ['number','email','date','range'].includes(el.type)) {
                         el.type = 'text';
                     }
                 }""",

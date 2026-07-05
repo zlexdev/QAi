@@ -46,6 +46,9 @@ _NAV_TIMEOUT_MS = 15_000
 _SETTLE_MS = 800
 _BODY_PREVIEW_LEN = 4_000
 _NETWORKIDLE_TIMEOUT_MS = 5_000
+_DOM_STABLE_TIMEOUT_MS = 4_000
+_DOM_STABLE_POLL_MS = 400
+_DOM_STABLE_CONSECUTIVE = 2
 _CF_WAIT_TIMEOUT_MS = 15_000
 _CF_POLL_MS = 500
 _CF_TITLE_MARKERS = ("just a moment", "checking your browser", "attention required")
@@ -270,6 +273,28 @@ class CaptureSession:
         # Best-effort stability wait — a timeout here is normal (SPAs keep polling), not an error.
         with contextlib.suppress(Exception):
             await self.page.wait_for_load_state("networkidle", timeout=_NETWORKIDLE_TIMEOUT_MS)
+        await self._wait_dom_stable()
+
+    async def _wait_dom_stable(self) -> None:
+        """Hydration-aware settle: frameworks like Next.js reach ``networkidle`` before
+        client components finish mounting, so interactive elements (buttons, forms) can
+        still be absent right after navigation. Poll the element count until it stops
+        growing, capped low so static pages don't pay the cost."""
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + _DOM_STABLE_TIMEOUT_MS / 1000
+        try:
+            last_count = await self.page.evaluate("document.querySelectorAll('*').length")
+        except Exception:
+            return
+        consecutive_matches = 0
+        while loop.time() < deadline and consecutive_matches < _DOM_STABLE_CONSECUTIVE:
+            await self.page.wait_for_timeout(_DOM_STABLE_POLL_MS)
+            try:
+                count = await self.page.evaluate("document.querySelectorAll('*').length")
+            except Exception:
+                return
+            consecutive_matches = consecutive_matches + 1 if count == last_count else 0
+            last_count = count
 
     async def _snapshot_dom_errors(self) -> set[str]:
         try:

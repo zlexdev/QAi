@@ -1,8 +1,11 @@
-# qai
+# QAi
 
 Autonomous web-form fuzzer. Give it a `URL` + a repo, it finds a bug in a form
 (5xx / console-error under fuzzing) and points at the exact `file:line` in your
 backend where it lives — no manual test writing, no AI/paid APIs.
+
+Full usage guide: **[USAGE.md](USAGE.md)**. Architecture background: [PLAN.md](PLAN.md) /
+[mini-plat.md](mini-plat.md).
 
 ```
 URL → page model (fields+types) → fuzz matrix per form → capture effects
@@ -122,6 +125,12 @@ interactive challenge just means an honestly-empty result, not a crash or a bypa
 
 MVP = Phases 0–3 from `PLAN.md`. Phase 4 (state-graph crawling, recursion, destructive-
 action guard) is intentionally out of scope for this release.
+
+## See also
+
+- [USAGE.md](USAGE.md) — full CLI/library/MCP reference, troubleshooting, safety model
+- [PLAN.md](PLAN.md) — MVP phase breakdown (Phases 0–3) and the CUT-list
+- [mini-plat.md](mini-plat.md) — the full architecture this project instantiates
 
 ## License
 

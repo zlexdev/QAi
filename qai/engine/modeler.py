@@ -54,7 +54,10 @@ _EXTRACT_JS = r"""
     if (tag === 'input') {
       const t = (el.getAttribute('type') || 'text').toLowerCase();
       const known = ['text','number','email','password','date','checkbox','radio','file'];
-      return known.includes(t) ? t : (t === 'tel' || t === 'url' || t === 'search' ? 'text' : 'unknown');
+      if (known.includes(t)) return t;
+      if (t === 'tel' || t === 'url' || t === 'search') return 'text';
+      if (t === 'range') return 'number';  // semantically numeric (has min/max/step)
+      return 'unknown';
     }
     return 'unknown';
   };

@@ -13,6 +13,7 @@ from qai.engine.contracts import (
     Finding,
     FindingKind,
     FuzzCase,
+    HttpMethod,
     ResponseKind,
     Severity,
 )
@@ -33,9 +34,16 @@ def _preview(value: str) -> str:
 class Analyzer:
     """Stateless: consumes one (plan, effect) pair, emits zero or more Findings."""
 
-    def analyze(self, plan: FuzzPlan, effect: EffectBundle) -> list[Finding]:
+    def analyze(
+        self, plan: FuzzPlan, effect: EffectBundle, submit_method: HttpMethod | None = None
+    ) -> list[Finding]:
+        """``submit_method`` — the form's own submission method (its ``method`` attr,
+        default POST). Only requests using that method are treated as caused by the
+        fuzzed submission; a capture window can otherwise sweep in unrelated background
+        traffic (nav-link prefetch HEAD requests, analytics beacons) that has nothing to
+        do with this action and would otherwise misattribute noise as a finding."""
         findings: list[Finding] = []
-        findings += self._request_findings(plan, effect)
+        findings += self._request_findings(plan, effect, submit_method)
         findings += self._console_findings(plan, effect)
         findings += self._dom_error_findings(plan, effect)
         if findings:
@@ -47,9 +55,14 @@ class Analyzer:
             )
         return findings
 
-    def _request_findings(self, plan: FuzzPlan, effect: EffectBundle) -> list[Finding]:
+    def _request_findings(
+        self, plan: FuzzPlan, effect: EffectBundle, submit_method: HttpMethod | None
+    ) -> list[Finding]:
         out: list[Finding] = []
-        for req in effect.requests:
+        candidates = effect.requests
+        if submit_method is not None:
+            candidates = [r for r in candidates if r.method is submit_method]
+        for req in candidates:
             if req.response_kind is ResponseKind.SERVER_ERROR:
                 out.append(
                     Finding(
