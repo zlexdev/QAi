@@ -116,7 +116,7 @@ cls Finding(BaseModel)
 
 cls RequestTemplate(BaseModel)
 
-cls SkipReason(StrEnum): BUDGET_MAX_ACTIONS, BUDGET_WALL_CLOCK, TRAP_DETECTED, REPLAY_FAILED
+cls SkipReason(StrEnum): BUDGET_MAX_ACTIONS, BUDGET_WALL_CLOCK, TRAP_DETECTED, REPLAY_FAILED, DUPLICATE_TEMPLATE
 
 cls SkippedPage(BaseModel)
   # A page the crawler discovered a link/button to but never actually visited.
@@ -125,6 +125,9 @@ cls RunReport(BaseModel)
   # Top-level result of one scan — the machine output consumed by CLI/MCP/CI.
   ok() -> bool
   duration_seconds() -> float
+
+cls CookieSpec(BaseModel)
+  to_playwright() -> dict[str, str | bool]
 
 cls CrawlBudget(BaseModel)
 
@@ -206,6 +209,10 @@ cls InvalidTargetError(QaiError)
 cls CaptureError(QaiError)
   # Browser/CDP navigation or capture failed after retries.
   __init__(url: str, cause: str) -> None
+
+cls InvalidCookieSpecError(QaiError)
+  # A ``--cookie``/MCP cookie argument didn't match ``domain:name=value``.
+  __init__(raw: str, reason: str) -> None
 
 cls RouteResolveError(QaiError)
   # A captured request could not be resolved to a source route.
@@ -335,12 +342,12 @@ _flatten_fields(page_model: PageModel) -> list[FieldModel]
 
 async run_scan(url: str, repo_path: str? = None) -> RunReport
 
-async _recon(url: str, run_id: str, pool: BrowserPool, stability_cache: dict[str, float) -> PageModel
+async _recon(url: str, run_id: str, pool: BrowserPool, stability_cache: dict[str, float, cookies: list[CookieSpec]? = None) -> PageModel
   # One-off session that only models the page — never fills or submits anything.
 
 async _fuzz_page_model() -> tuple[list[Finding], int, int, list[str]]
 
-async _run_worker(url: str, bucket: list[WorkItem, tab_index: int, run_id: str, headless: bool, har_dir: str?, correlator: CodeCorrelator?, har_paths: list[str, direct_mode: bool, templates: dict[str, RequestTemplate?, pool: BrowserPool, stability_cache: dict[str, float) -> list[Finding]
+async _run_worker(url: str, bucket: list[WorkItem, tab_index: int, run_id: str, headless: bool, har_dir: str?, correlator: CodeCorrelator?, har_paths: list[str, direct_mode: bool, templates: dict[str, RequestTemplate?, pool: BrowserPool, stability_cache: dict[str, float, cookies: list[CookieSpec]? = None) -> list[Finding]
 
 _learn_from_effect(form: FormModel, effect: EffectBundle) -> RequestTemplate | None
 
@@ -352,10 +359,13 @@ async run_crawl(url: str, repo_path: str? = None) -> CrawlReport
 ```
 # State identity for the crawler — a URL alone can't identify an SPA's in-memory
 
+_ID_SEGMENT_RE = …
 _STRUCTURAL_SIGNATURE_JS = …
 
 normalize_url(url: str) -> str
   # Strip fragment (SPA router hash aside) and trailing slash for stable comparison.
+
+url_template(url: str) -> str
 
 async compute_state(page: Page, checkpoint_id: str = 'root') -> StateRef
 

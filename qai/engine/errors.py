@@ -25,6 +25,15 @@ class CaptureError(QaiError):
         self.cause = cause
 
 
+class InvalidCookieSpecError(QaiError):
+    """A ``--cookie``/MCP cookie argument didn't match ``domain:name=value``."""
+
+    def __init__(self, raw: str, reason: str) -> None:
+        super().__init__(f"invalid cookie spec {raw!r}: {reason}")
+        self.raw = raw
+        self.reason = reason
+
+
 class RouteResolveError(QaiError):
     """A captured request could not be resolved to a source route."""
 

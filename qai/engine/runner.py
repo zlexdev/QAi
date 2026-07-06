@@ -22,6 +22,7 @@ from pathlib import Path
 from qai.engine.analyzer import Analyzer
 from qai.engine.capture import BrowserPool, CaptureSession
 from qai.engine.contracts import (
+    CookieSpec,
     CrawlBudget,
     CrawlReport,
     EffectBundle,
@@ -70,6 +71,7 @@ async def run_scan(
     har_dir: str | None = None,
     safe_mode: bool = False,
     direct_mode: bool = False,
+    cookies: list[CookieSpec] | None = None,
 ) -> RunReport:
     """Execute the full Phase 0-3 pipeline against ``url`` and return a RunReport.
 
@@ -84,6 +86,10 @@ async def run_scan(
             faster and immune to client-side maxlength/type constraints. Falls back to
             the UI executor per-form whenever the baseline body isn't a simple
             form-urlencoded shape traceable 1:1 to the form's own fields.
+        cookies: injected into every worker's browser context before its first
+            navigation — lets a scan reach pages behind a login wall. Each cookie's own
+            ``domain`` decides which requests carry it, so cookies for a separate
+            auth/SSO subdomain can be supplied alongside the main target's.
     """
     url = validate_url(url)
     run_id = uuid.uuid4().hex[:12]
@@ -100,7 +106,7 @@ async def run_scan(
     pool = await BrowserPool.create(headless=headless)
     stability_cache: dict[str, float] = {}
     try:
-        page_model = await _recon(url, run_id, pool, stability_cache)
+        page_model = await _recon(url, run_id, pool, stability_cache, cookies)
         forms_scanned = len(page_model.forms)
 
         if safe_mode or not page_model.forms:
@@ -128,6 +134,7 @@ async def run_scan(
             har_dir=har_dir,
             direct_mode=direct_mode,
             correlator=correlator,
+            cookies=cookies,
         )
     finally:
         await pool.close()
@@ -161,11 +168,16 @@ async def _recon(
     run_id: str,
     pool: BrowserPool,
     stability_cache: dict[str, float],
+    cookies: list[CookieSpec] | None = None,
 ) -> PageModel:
     """One-off session that only models the page — never fills or submits anything."""
     modeler = PageModeler()
     async with CaptureSession(
-        run_id=run_id, tab_id="recon", pool=pool, stability_cache=stability_cache
+        run_id=run_id,
+        tab_id="recon",
+        pool=pool,
+        stability_cache=stability_cache,
+        cookies=cookies,
     ) as session:
         await session.open(url)
         return await modeler.model(session.page)
@@ -183,6 +195,7 @@ async def _fuzz_page_model(
     har_dir: str | None,
     direct_mode: bool,
     correlator: CodeCorrelator | None,
+    cookies: list[CookieSpec] | None = None,
 ) -> tuple[list[Finding], int, int, list[str]]:
     """Fuzzes every field of an already-modeled page. Factored out of ``run_scan`` so
     ``run_crawl`` can fuzz Explorer's already-visited pages directly, instead of paying
@@ -216,6 +229,7 @@ async def _fuzz_page_model(
                 templates,
                 pool,
                 stability_cache,
+                cookies,
             )
             for tab_index, bucket in enumerate(buckets)
             if bucket
@@ -238,6 +252,7 @@ async def _run_worker(
     templates: dict[str, RequestTemplate | None],
     pool: BrowserPool,
     stability_cache: dict[str, float],
+    cookies: list[CookieSpec] | None = None,
 ) -> list[Finding]:
     tab_id = f"tab-{tab_index}"
     har_path = str(Path(har_dir) / f"{run_id}-{tab_id}.har") if har_dir else None
@@ -252,6 +267,7 @@ async def _run_worker(
         har_path=har_path,
         pool=pool,
         stability_cache=stability_cache,
+        cookies=cookies,
     ) as session:
         executor = FormExecutor(session)
         await session.open(url)
@@ -304,6 +320,7 @@ async def run_crawl(
     har_dir: str | None = None,
     safe_mode: bool = False,
     direct_mode: bool = False,
+    cookies: list[CookieSpec] | None = None,
 ) -> CrawlReport:
     """Phase 4: discover same-origin states reachable from ``url`` (BFS, budgeted),
     then run the Phase 0-3 fuzz pipeline against every discovered page that has a form.
@@ -311,8 +328,8 @@ async def run_crawl(
     Destructive-looking links/buttons (keyword heuristic, see ``qai.engine.risk``) are
     never clicked unless their selector is in ``allowlist`` — see ``CrawlReport.
     skipped_destructive`` for what was skipped. ``safe_mode``/``direct_mode``/
-    ``max_parallel``/``har_dir`` apply to each discovered page exactly as they do to a
-    single ``run_scan`` call.
+    ``max_parallel``/``har_dir``/``cookies`` apply to each discovered page exactly as
+    they do to a single ``run_scan`` call.
     """
     root = validate_url(url)
     run_id = uuid.uuid4().hex[:12]
@@ -329,7 +346,11 @@ async def run_crawl(
     pages: list[RunReport] = []
     try:
         async with CaptureSession(
-            run_id=run_id, tab_id="explorer", pool=pool, stability_cache=stability_cache
+            run_id=run_id,
+            tab_id="explorer",
+            pool=pool,
+            stability_cache=stability_cache,
+            cookies=cookies,
         ) as session:
             explorer = Explorer(session, active_budget, allowlist=allowlist)
             result = await explorer.crawl(root)
@@ -367,6 +388,7 @@ async def run_crawl(
                     har_dir=har_dir,
                     direct_mode=direct_mode,
                     correlator=correlator,
+                    cookies=cookies,
                 )
             pages.append(
                 RunReport(

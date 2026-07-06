@@ -26,7 +26,7 @@ from qai.engine.contracts import (
 from qai.engine.logging import get_logger
 from qai.engine.modeler import PageModeler
 from qai.engine.risk import is_allowlisted, is_destructive
-from qai.engine.state import compute_state, normalize_url
+from qai.engine.state import compute_state, normalize_url, url_template
 
 _log = get_logger("explorer")
 _CLICK_SETTLE_MS = 500
@@ -67,6 +67,7 @@ class Explorer:
         self._allowlist = allowlist
         self._modeler = PageModeler()
         self._seen_hash_counts: dict[str, int] = {}
+        self._template_counts: dict[str, int] = {}
         # Set once at construction, not inside crawl(), so run_crawl's post-discovery
         # fuzz phase can share this same absolute deadline instead of the wall-clock
         # budget only ever bounding discovery (fuzzing pages already found could still
@@ -133,6 +134,15 @@ class Explorer:
                     if norm in queued_urls:
                         continue
                     queued_urls.add(norm)
+                    template = url_template(norm)
+                    template_seen = self._template_counts.get(template, 0)
+                    if template_seen >= self._budget.max_pages_per_template:
+                        result.not_visited.append(
+                            SkippedPage(url=norm, reason=SkipReason.DUPLICATE_TEMPLATE)
+                        )
+                        _log.info("duplicate_template_skipped", url=norm, template=template)
+                        continue
+                    self._template_counts[template] = template_seen + 1
                 action = CrawlAction(
                     kind=ActionKind(raw["kind"]),
                     selector=raw["selector"],

@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from qai.engine.capture import CaptureSession
-from qai.engine.contracts import CrawlBudget
+from qai.engine.contracts import CrawlBudget, SkipReason
 from qai.engine.explorer import Explorer
 from qai.engine.state import normalize_url
 
@@ -71,6 +71,23 @@ def _duplicate_links_app() -> FastAPI:
     return app
 
 
+def _templated_listing_app() -> FastAPI:
+    """5 structurally identical detail pages under a numeric id — the funpay.com
+    pattern (900+ /lots/<id> pages) that burns a crawl's whole time budget on one
+    template shape before it ever reaches a different page."""
+    app = FastAPI()
+
+    @app.get("/", response_class=HTMLResponse)
+    async def root() -> str:
+        return "".join(f'<a href="/items/{i}">Item {i}</a>' for i in range(1, 6))
+
+    @app.get("/items/{item_id}", response_class=HTMLResponse)
+    async def item(item_id: int) -> str:
+        return "<p>Item detail</p>"
+
+    return app
+
+
 def _start_server(app: FastAPI) -> tuple[str, uvicorn.Server, threading.Thread]:
     port = _free_port()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
@@ -95,6 +112,14 @@ def crawl_site() -> Iterator[str]:
 @pytest.fixture
 def duplicate_links_site() -> Iterator[str]:
     url, server, thread = _start_server(_duplicate_links_app())
+    yield url
+    server.should_exit = True
+    thread.join(timeout=5)
+
+
+@pytest.fixture
+def templated_listing_site() -> Iterator[str]:
+    url, server, thread = _start_server(_templated_listing_app())
     yield url
     server.should_exit = True
     thread.join(timeout=5)
@@ -135,6 +160,27 @@ async def test_explorer_visits_all_pages_and_skips_destructive(crawl_site: str) 
 
     b_page = next(m for s, m in result.visited if s.normalized_url == normalize_url(f"{crawl_site}/b"))
     assert len(b_page.forms) == 1
+
+
+async def test_same_template_pages_are_deduped_to_one(templated_listing_site: str) -> None:
+    """5 links differing only by numeric id (/items/1..5) must not all be visited —
+    only the first per path template; the rest are recorded as DUPLICATE_TEMPLATE,
+    never queued (the funpay.com fix: hundreds of /lots/<id> pages must not eat the
+    whole crawl budget before the crawler reaches anything else)."""
+    budget = CrawlBudget(max_depth=2, max_actions=20, wall_clock_seconds=30)
+    async with CaptureSession(headless=True, run_id="t") as session:
+        explorer = Explorer(session, budget)
+        result = await explorer.crawl(templated_listing_site)
+
+    visited_item_urls = {
+        s.normalized_url for s in result.states if "/items/" in s.normalized_url
+    }
+    assert len(visited_item_urls) == 1
+
+    skipped_reasons = {p.reason for p in result.not_visited}
+    assert SkipReason.DUPLICATE_TEMPLATE in skipped_reasons
+    skipped_item_urls = [p.url for p in result.not_visited if "/items/" in p.url]
+    assert len(skipped_item_urls) == 4
 
 
 async def test_explorer_respects_max_actions_budget(crawl_site: str) -> None:

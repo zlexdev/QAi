@@ -11,8 +11,8 @@ from urllib.parse import urlparse
 
 from rich.console import Console
 
-from qai.engine.contracts import CrawlBudget, ScanReport
-from qai.engine.errors import QaiError
+from qai.engine.contracts import CookieSpec, CrawlBudget, ScanReport
+from qai.engine.errors import InvalidCookieSpecError, QaiError
 from qai.engine.logging import configure_logging
 from qai.engine.reporter import Reporter
 from qai.engine.runner import run_crawl, run_scan
@@ -22,6 +22,21 @@ _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 def _is_local_target(url: str) -> bool:
     return urlparse(url).hostname in _LOCAL_HOSTS
+
+
+def _parse_cookie_arg(raw: str) -> CookieSpec:
+    """Parse ``domain:name=value`` — e.g. ``.funpay.com:golden_key=abc123``, repeatable
+    so cookies for a separate auth/SSO subdomain can be supplied alongside the main
+    target's own."""
+    domain, sep, rest = raw.partition(":")
+    if not sep:
+        raise InvalidCookieSpecError(raw, "missing ':' — expected domain:name=value")
+    name, sep, value = rest.partition("=")
+    if not sep:
+        raise InvalidCookieSpecError(raw, "missing '=' — expected domain:name=value")
+    if not domain or not name:
+        raise InvalidCookieSpecError(raw, "domain and name must be non-empty")
+    return CookieSpec(name=name, value=value, domain=domain)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -91,6 +106,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Selector explicitly allowed to be clicked despite looking destructive "
         "(repeatable). Review qai's destructive keyword heuristic before using this.",
     )
+    parser.add_argument(
+        "--cookie",
+        dest="cookies",
+        action="append",
+        default=[],
+        metavar="DOMAIN:NAME=VALUE",
+        help="Inject an auth cookie before any navigation (repeatable). Each cookie's "
+        "own domain decides which requests carry it, so a separate auth/SSO subdomain "
+        "can be supplied alongside the main target's, e.g. "
+        "--cookie .example.com:session=abc --cookie sso.example.com:token=xyz",
+    )
     return parser
 
 
@@ -114,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
 
     report: ScanReport
     try:
+        cookies = [_parse_cookie_arg(raw) for raw in args.cookies]
         if args.crawl:
             budget = CrawlBudget(
                 max_depth=args.max_depth,
@@ -131,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
                     har_dir=args.har_dir,
                     safe_mode=safe_mode,
                     direct_mode=args.direct_mode,
+                    cookies=cookies,
                 )
             )
         else:
@@ -143,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
                     har_dir=args.har_dir,
                     safe_mode=safe_mode,
                     direct_mode=args.direct_mode,
+                    cookies=cookies,
                 )
             )
     except QaiError as exc:

@@ -51,6 +51,7 @@ qai <url> [options]
 | `--max-actions N` | `50` | Crawl: max links/buttons followed |
 | `--wall-clock S` | `180` | Crawl: overall time budget in seconds |
 | `--allow-destructive SELECTOR` | none | Repeatable — allow clicking a specific destructive-looking selector during a crawl |
+| `--cookie DOMAIN:NAME=VALUE` | none | Repeatable — inject an auth cookie before any navigation, so a scan can reach pages behind a login wall. Each cookie's own domain decides which requests carry it, so a separate auth/SSO subdomain's cookie can be listed alongside the main target's: `--cookie .example.com:session=abc --cookie sso.example.com:token=xyz` |
 
 Exit code: `0` if no findings, `2` if findings exist, `1` on a `QaiError` (bad URL,
 missing repo path, capture failure after retry).
@@ -255,12 +256,14 @@ uv run qai-mcp
 Point your MCP client (Claude Code, another agent harness) at `qai-mcp` over stdio.
 Three tools:
 
-- **`qa_scan(url, repo_path=None, headless=True, parallel=1, har_dir=None, own_target=False, direct_mode=False)`**
+- **`qa_scan(url, repo_path=None, headless=True, parallel=1, har_dir=None, own_target=False, direct_mode=False, cookies=None)`**
   → JSON `RunReport`.
 - **`qa_scan_html(url, repo_path=None, out_path="qai-report.html", headless=True, parallel=1, own_target=False)`**
   → JSON summary + a written HTML report path.
-- **`qa_crawl(url, repo_path=None, headless=True, max_depth=2, max_actions=50, wall_clock_seconds=180, allow_destructive=None, parallel=1, own_target=False, direct_mode=False)`**
+- **`qa_crawl(url, repo_path=None, headless=True, max_depth=2, max_actions=50, wall_clock_seconds=180, allow_destructive=None, parallel=1, own_target=False, direct_mode=False, cookies=None)`**
   → JSON `CrawlReport` (BFS-discovered pages, each fuzzed; see Crawl mode above).
+
+`cookies` is a list of dicts (`{"name": ..., "value": ..., "domain": ..., "path": "/", "secure": false, "http_only": false, "same_site": "Lax"}` — only `name`/`value`/`domain` required), injected before any navigation so the scan/crawl can reach pages behind a login wall. Each cookie's own `domain` decides which requests carry it, so a separate auth/SSO subdomain's cookie can be listed alongside the main target's.
 
 `own_target` is the MCP equivalent of `--i-own-this-target` — an agent can call
 `qa_scan`/`qa_crawl` against any URL and safely get a read-only page model back; it

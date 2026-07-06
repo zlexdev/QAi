@@ -12,9 +12,10 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import ValidationError
 
-from qai.engine.contracts import CrawlBudget
-from qai.engine.errors import QaiError
+from qai.engine.contracts import CookieSpec, CrawlBudget
+from qai.engine.errors import InvalidCookieSpecError, QaiError
 from qai.engine.logging import configure_logging
 from qai.engine.reporter import Reporter
 from qai.engine.runner import run_crawl, run_scan
@@ -29,6 +30,18 @@ def _resolve_safe_mode(url: str, own_target: bool) -> bool:
     return not (own_target or urlparse(url).hostname in _LOCAL_HOSTS)
 
 
+def _parse_cookies(raw: list[dict[str, str]] | None) -> list[CookieSpec] | None:
+    """Each dict needs ``name``/``value``/``domain`` (optional ``path``/``secure``/
+    ``http_only``/``same_site``) — a separate auth/SSO subdomain's cookie can be listed
+    alongside the main target's, since each carries its own ``domain``."""
+    if not raw:
+        return None
+    try:
+        return [CookieSpec(**c) for c in raw]
+    except ValidationError as exc:
+        raise InvalidCookieSpecError(str(raw), str(exc)) from exc
+
+
 @mcp.tool()
 async def qa_scan(
     url: str,
@@ -38,6 +51,7 @@ async def qa_scan(
     har_dir: str | None = None,
     own_target: bool = False,
     direct_mode: bool = False,
+    cookies: list[dict[str, str]] | None = None,
 ) -> str:
     """Run the full qai pipeline against ``url`` and return a JSON RunReport.
 
@@ -55,6 +69,11 @@ async def qa_scan(
         direct_mode: after one baseline UI submit per form, fuzz the rest straight over
             HTTP (faster, bypasses client-side maxlength/type constraints); falls back
             to the UI path per-form when the baseline body isn't a simple shape.
+        cookies: auth cookies injected before any navigation, one dict per cookie with
+            keys ``name``/``value``/``domain`` (optional ``path``/``secure``/
+            ``http_only``/``same_site``) — lets the scan reach pages behind a login
+            wall; a separate auth/SSO subdomain's cookie can be listed alongside the
+            main target's since each carries its own domain.
 
     Returns:
         JSON-encoded RunReport: run_id, forms_scanned, cases_executed, tabs_used,
@@ -71,6 +90,7 @@ async def qa_scan(
             har_dir=har_dir,
             safe_mode=safe_mode,
             direct_mode=direct_mode,
+            cookies=_parse_cookies(cookies),
         )
     except QaiError as exc:
         return json.dumps({"error": str(exc), "error_type": type(exc).__name__})
@@ -124,6 +144,7 @@ async def qa_crawl(
     parallel: int = 1,
     own_target: bool = False,
     direct_mode: bool = False,
+    cookies: list[dict[str, str]] | None = None,
 ) -> str:
     """Discover same-origin pages (BFS, budgeted) from ``url`` and fuzz every form found.
 
@@ -132,8 +153,8 @@ async def qa_crawl(
     selector is in ``allow_destructive``. This is a heuristic, not a security guarantee —
     review the returned ``skipped_destructive`` list yourself.
 
-    See ``qa_scan`` for the ``own_target``/safe-mode rule — it applies identically here,
-    per discovered page.
+    See ``qa_scan`` for the ``own_target``/safe-mode rule and the ``cookies`` shape —
+    both apply identically here, per discovered page.
 
     Returns:
         JSON-encoded CrawlReport: run_id, root_url, states_visited, pages (one RunReport
@@ -153,6 +174,7 @@ async def qa_crawl(
             max_parallel=parallel,
             safe_mode=safe_mode,
             direct_mode=direct_mode,
+            cookies=_parse_cookies(cookies),
         )
     except QaiError as exc:
         return json.dumps({"error": str(exc), "error_type": type(exc).__name__})

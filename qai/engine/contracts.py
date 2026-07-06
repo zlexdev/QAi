@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -263,6 +264,7 @@ class SkipReason(StrEnum):
     BUDGET_WALL_CLOCK = "budget_wall_clock"
     TRAP_DETECTED = "trap_detected"
     REPLAY_FAILED = "replay_failed"
+    DUPLICATE_TEMPLATE = "duplicate_template"
 
 
 class SkippedPage(BaseModel):
@@ -299,6 +301,35 @@ class RunReport(BaseModel):
         return (self.finished_at - self.started_at).total_seconds()
 
 
+class CookieSpec(BaseModel):
+    """One cookie to inject into the browser context before any navigation — lets a
+    scan/crawl authenticate against a target (and, via ``domain``, against a separate
+    SSO/auth subdomain the main site depends on) instead of only ever seeing the
+    logged-out surface."""
+
+    model_config = _FROZEN
+    name: str
+    value: str
+    domain: str
+    path: str = "/"
+    # Most fuzz targets are staging/local http, not https — defaulting True would make
+    # the cookie silently never leave the browser (secure cookies are https-only).
+    secure: bool = False
+    http_only: bool = False
+    same_site: Literal["Strict", "Lax", "None"] = "Lax"
+
+    def to_playwright(self) -> dict[str, str | bool]:
+        return {
+            "name": self.name,
+            "value": self.value,
+            "domain": self.domain,
+            "path": self.path,
+            "secure": self.secure,
+            "httpOnly": self.http_only,
+            "sameSite": self.same_site,
+        }
+
+
 class CrawlBudget(BaseModel):
     model_config = _FROZEN
     max_depth: int = 2
@@ -307,6 +338,11 @@ class CrawlBudget(BaseModel):
     max_actions: int = 50
     wall_clock_seconds: int = 180
     trap_repeat_limit: int = 3
+    # Caps how many URLs sharing the same path template (e.g. /lots/<id>) get queued —
+    # the rest are recorded as SkipReason.DUPLICATE_TEMPLATE, never visited. Without this
+    # a listing site with hundreds of same-shaped detail pages burns the whole budget
+    # on near-identical pages before the crawler leaves the first template.
+    max_pages_per_template: int = 1
 
 
 class CrawlReport(BaseModel):
