@@ -41,6 +41,15 @@ class Pipeline:
     def cursor(self) -> int:
         return self._cursor
 
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    def bind_session_id(self, session_id: str) -> None:
+        """Set once the durable SessionStore has minted the real id (Pipeline itself
+        doesn't own id generation — SessionStore.create() does)."""
+        self._session_id = session_id
+
     def restore(self, steps: list[StepInfo], cursor: int) -> None:
         """Rehydrate step/cursor state loaded from SessionStore (restart-resume path)."""
         self._steps = steps
