@@ -4,6 +4,8 @@
 ## Submodules
 
 - [`fuzzer/`](fuzzer\_MODULE_AUTO.md) (2 py, 10 cls, 2 fn)
+- [`pipeline/`](pipeline\_MODULE_AUTO.md) (4 py, 12 cls, 2 fn)
+- [`plugins/`](plugins\_MODULE_AUTO.md) (4 py, 8 cls, 3 fn)
 
 ## analyzer.py
 ```
@@ -121,6 +123,8 @@ cls SkipReason(StrEnum): BUDGET_MAX_ACTIONS, BUDGET_WALL_CLOCK, TRAP_DETECTED, R
 cls SkippedPage(BaseModel)
   # A page the crawler discovered a link/button to but never actually visited.
 
+cls PluginFinding(BaseModel)
+
 cls RunReport(BaseModel)
   # Top-level result of one scan — the machine output consumed by CLI/MCP/CI.
   ok() -> bool
@@ -134,6 +138,7 @@ cls CrawlBudget(BaseModel)
 cls CrawlReport(BaseModel)
   # Aggregates every visited state's RunReport plus the discovered state graph.
   findings() -> list[Finding]
+  plugin_findings() -> list[PluginFinding]
   ok() -> bool
   duration_seconds() -> float
   target_url() -> str
@@ -217,6 +222,21 @@ cls InvalidCookieSpecError(QaiError)
 cls RouteResolveError(QaiError)
   # A captured request could not be resolved to a source route.
   __init__(route: str?, cause: str) -> None
+
+cls UnknownCheckError(QaiError)
+  # A ``plugins=[...]`` entry doesn't match any registered check.
+  __init__(name: str, available: list[str) -> None
+
+cls UnknownSessionError(QaiError)
+  # A pipeline session_id has no matching SQLite row (never existed, expired, or aborted).
+  __init__(session_id: str) -> None
+
+cls ReconNotRunError(QaiError)
+  __init__(stage: str) -> None
+
+cls InvalidStepConfigError(QaiError)
+  # A ``config`` payload's ``stage`` discriminator doesn't match the pipeline's current stage.
+  __init__(expected_stage: str, got_stage: str) -> None
 
 ```
 
@@ -308,6 +328,10 @@ _render_html(report: ScanReport) -> str
 
 _table_or_empty(report: ScanReport, rows: str) -> str
 
+_plugin_section_html(report: ScanReport) -> str
+
+_plugin_finding_row(f: PluginFinding) -> str
+
 _render_markdown(report: ScanReport) -> str
 
 _render_run_fields_markdown(report: RunReport) -> list[str]
@@ -343,8 +367,9 @@ _flatten_fields(page_model: PageModel) -> list[FieldModel]
 
 async run_scan(url: str, repo_path: str? = None) -> RunReport
 
-async _recon(url: str, run_id: str, pool: BrowserPool, stability_cache: dict[str, float, cookies: list[CookieSpec]? = None) -> PageModel
-  # One-off session that only models the page — never fills or submits anything.
+async _recon(url: str, run_id: str, pool: BrowserPool, stability_cache: dict[str, float, cookies: list[CookieSpec]? = None) -> tuple[PageModel, EffectBundle]
+
+async _run_plugins(plugins: list[str]?, page_model: PageModel, recon_effect: EffectBundle, repo_path: str?, cookies: list[CookieSpec]?) -> list[PluginFinding]
 
 async _fuzz_page_model() -> tuple[list[Finding], int, int, list[str]]
 
