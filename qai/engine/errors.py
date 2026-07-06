@@ -60,6 +60,16 @@ class UnknownSessionError(QaiError):
         self.session_id = session_id
 
 
+class ReconNotRunError(QaiError):
+    """A CheckStage ran before recon populated PentestContext.page — guard against a
+    malformed/out-of-order stage list (not reachable via the pilot's fixed 2-stage plan,
+    but a Pipeline stage list is user-constructible in principle)."""
+
+    def __init__(self, stage: str) -> None:
+        super().__init__(f"stage {stage!r} requires ctx.page, but recon has not run yet")
+        self.stage = stage
+
+
 class InvalidStepConfigError(QaiError):
     """A ``config`` payload's ``stage`` discriminator doesn't match the pipeline's current stage."""
 
