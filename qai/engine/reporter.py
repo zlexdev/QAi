@@ -7,6 +7,7 @@ not the engine internals. JSON is the machine surface for CI.
 from __future__ import annotations
 
 import html
+import json
 from pathlib import Path
 
 from rich.console import Console
@@ -68,6 +69,12 @@ class Reporter:
 
     def write_markdown(self, report: ScanReport, path: Path) -> None:
         path.write_text(_render_markdown(report), encoding="utf-8")
+
+    def write_findings(self, report: ScanReport, path: Path) -> None:
+        """Findings only, no page/state/timing noise — for a quick "were there any
+        errors at all" check without wading through the full report."""
+        payload = [f.model_dump(mode="json") for f in report.findings]
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 _SEVERITY_ORDER = {Severity.HIGH: 0, Severity.MEDIUM: 1, Severity.LOW: 2}

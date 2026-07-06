@@ -203,9 +203,11 @@ def main(argv: list[str] | None = None) -> int:
         report_dir.mkdir(parents=True, exist_ok=True)
         json_path = report_dir / f"{report.run_id}.json"
         md_path = report_dir / f"{report.run_id}.md"
+        findings_path = report_dir / f"{report.run_id}.findings.json"
         reporter.write_json(report, json_path)
         reporter.write_markdown(report, md_path)
-        console.print(f"[dim]Report saved: {json_path}, {md_path}[/dim]")
+        reporter.write_findings(report, findings_path)
+        console.print(f"[dim]Report saved: {json_path}, {md_path}, {findings_path}[/dim]")
 
     return 0 if report.ok else 2
 

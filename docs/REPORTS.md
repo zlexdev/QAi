@@ -11,6 +11,7 @@ Every CLI run auto-saves a report — you don't need to pass `--json`/`--html` t
 ```
 qai-reports/<run_id>.json
 qai-reports/<run_id>.md
+qai-reports/<run_id>.findings.json
 ```
 
 - `--report-dir DIR` — change the directory (default `./qai-reports`).
@@ -25,11 +26,12 @@ pass — those still go exactly where you told them to.
 | Format | Flag | Use for |
 |---|---|---|
 | JSON | `--json PATH` (or auto-saved) | CI, machine parsing, feeding `report.findings` back into other tooling |
+| Findings-only JSON | auto-saved only (`Reporter.write_findings`) | a quick "were there any errors at all" check — just the `findings` array, no pages/states/timing |
 | Markdown | auto-saved only (`Reporter.write_markdown`) | pasting into a PR description, Slack, an issue tracker |
 | HTML | `--html PATH` | a human reading the result — self-contained, clickable `file:line`, severity-colored |
 | Terminal | always printed | quick glance while the scan is running |
 
-All four are rendered from the same `RunReport`/`CrawlReport` — nothing is recomputed,
+All five are rendered from the same `RunReport`/`CrawlReport` — nothing is recomputed,
 so they always agree with each other.
 
 ### Markdown shape
@@ -58,6 +60,7 @@ reporter = Reporter()
 reporter.write_json(report, Path("out.json"))
 reporter.write_markdown(report, Path("out.md"))
 reporter.write_html(report, Path("out.html"))
+reporter.write_findings(report, Path("out.findings.json"))
 ```
 
 `Reporter` methods accept both `RunReport` (single-page scan) and `CrawlReport`

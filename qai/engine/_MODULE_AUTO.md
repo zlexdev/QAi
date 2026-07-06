@@ -300,6 +300,7 @@ cls Reporter
   write_json(report: ScanReport, path: Path) -> None
   write_html(report: ScanReport, path: Path) -> None
   write_markdown(report: ScanReport, path: Path) -> None
+  write_findings(report: ScanReport, path: Path) -> None
 
 _severity_key(finding: Finding) -> int
 
