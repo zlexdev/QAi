@@ -192,7 +192,8 @@ def _render_run_fields_markdown(report: RunReport) -> list[str]:
 
 def _render_crawl_pages_markdown(report: CrawlReport) -> list[str]:
     lines = [
-        f"- **Pages visited**: {len(report.pages)}",
+        f"- **Pages visited**: {len(report.states_visited)}"
+        f" ({len(report.pages)} had a form and were fuzzed)",
         f"- **Pages not visited**: {len(report.pages_not_visited)}",
         f"- **Destructive actions skipped**: {len(report.skipped_destructive)}",
     ]
@@ -200,19 +201,26 @@ def _render_crawl_pages_markdown(report: CrawlReport) -> list[str]:
         lines.append(f"- **Stopped early**: budget exhausted ({report.budget_exhausted_by})")
     lines.append("")
 
+    pages_by_url = {p.target_url: p for p in report.pages}
     lines.append("## Pages visited")
     lines.append("")
-    if not report.pages:
+    if not report.states_visited:
         lines.append("(none)")
-    for page in report.pages:
-        lines.append(f"### {page.target_url}")
+    for state in report.states_visited:
+        page = pages_by_url.get(state.normalized_url)
+        lines.append(f"### {state.normalized_url}")
         lines.append("")
-        lines.append(
-            f"- Duration: {page.duration_seconds:.1f}s · Forms: {page.forms_scanned} · "
-            f"Cases: {page.cases_executed} · Findings: {len(page.findings)}"
-        )
-        if page.fields_examined:
-            lines.append("- Fields: " + ", ".join(f"`{f.selector}`" for f in page.fields_examined))
+        if page is None:
+            lines.append("- No form found — modeled only, nothing to fuzz.")
+        else:
+            lines.append(
+                f"- Duration: {page.duration_seconds:.1f}s · Forms: {page.forms_scanned} · "
+                f"Cases: {page.cases_executed} · Findings: {len(page.findings)}"
+            )
+            if page.fields_examined:
+                lines.append(
+                    "- Fields: " + ", ".join(f"`{f.selector}`" for f in page.fields_examined)
+                )
         lines.append("")
 
     if report.pages_not_visited:

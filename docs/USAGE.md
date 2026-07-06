@@ -150,6 +150,13 @@ every form found along the way, instead of only the one page you pointed it at.
   state.
 - **Budgets** stop the crawl: `--max-depth`, `--max-actions`, `--wall-clock`. Hitting
   one is reported as `budget_exhausted_by` in the JSON report, not a silent truncation.
+  `--max-actions` counts pages actually **visited** (not merely discovered — duplicate
+  nav/footer/mobile-menu links to the same URL are deduped before they ever cost budget).
+  ⚠️ `--wall-clock` currently bounds only the discovery (BFS) phase, not the fuzz pass
+  run afterward on every discovered page with a form — a crawl that finds many
+  form-bearing pages can still take much longer overall than `--wall-clock` alone
+  suggests. Budget the fuzz phase yourself via `--max-actions` (fewer pages = less
+  total fuzz time) until an overall time cap lands.
 - **Trap detection**: a state whose DOM hash repeats `CrawlBudget.trap_repeat_limit`
   times (default 3) stops being expanded further — guards against infinite
   calendars/paginations that would otherwise exhaust the action budget on one trap.
