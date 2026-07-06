@@ -73,25 +73,76 @@ for finding in report.findings:
     print(finding.severity, finding.detail, finding.source_location)
 ```
 
-## Use as an MCP server (for AI agents)
+## Deploy — install as a plugin for AI agents (MCP)
+
+qai ships an MCP (Model Context Protocol) server, so any MCP-speaking agent — Claude
+Code, Claude Desktop, Cursor, a custom agent harness — can call it as a tool instead of
+you running the CLI by hand. Three tools are exposed: `qa_scan`, `qa_scan_html`,
+`qa_crawl` (see [docs/USAGE.md](docs/USAGE.md#mcp-server-for-ai-agents) for full
+signatures, including `cookies=[...]` for authenticated targets).
+
+### 1. Install
 
 ```bash
+git clone https://github.com/zlexdev/QAi.git
+cd QAi
 uv sync --extra mcp
-uv run qai-mcp
+uv run playwright install chromium
 ```
 
-Exposes two tools to any MCP-speaking agent:
+There's no PyPI package yet — install from a local clone (above) or straight from git:
 
-- `qa_scan(url, repo_path=None, headless=True, parallel=1, har_dir=None, own_target=False, direct_mode=False)` — runs the pipeline, returns a JSON `RunReport`.
-- `qa_scan_html(url, repo_path=None, out_path="qai-report.html", headless=True, parallel=1, own_target=False)` — same, plus a human-readable HTML report on disk.
+```bash
+uv tool install "qai[mcp] @ git+https://github.com/zlexdev/QAi.git"
+uv tool run playwright install chromium   # once, after install
+```
 
-`own_target` gates real submissions the same way `--i-own-this-target` does on the
-CLI — an agent can safely point `qa_scan` at any URL and get a read-only page model
-back unless it explicitly confirms ownership of a non-local target.
+`uv tool install` puts `qai` and `qai-mcp` on your `PATH` globally, isolated in their
+own venv — no need to activate anything before pointing an agent at them.
 
-Point an agent's MCP config at `qai-mcp` (stdio transport) and it can scan any
-staging target and read back structured findings — no browser access needed on
-the agent's side.
+### 2. Register it with an agent
+
+**Claude Code** (this CLI) — one command, from the repo root:
+
+```bash
+claude mcp add qai -- uv run --directory /absolute/path/to/QAi qai-mcp
+# or, if installed with `uv tool install`:
+claude mcp add qai -- qai-mcp
+```
+
+Use `--scope user` to make it available in every project, not just this one:
+
+```bash
+claude mcp add qai --scope user -- qai-mcp
+```
+
+**Claude Desktop** — add to `claude_desktop_config.json`
+(`%APPDATA%\Claude\claude_desktop_config.json` on Windows,
+`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "qai": {
+      "command": "uv",
+      "args": ["run", "--directory", "/absolute/path/to/QAi", "qai-mcp"]
+    }
+  }
+}
+```
+
+**Any other MCP client** — the server speaks stdio, so the shape is always
+`{"command": ..., "args": [...]}`; point it at `qai-mcp` (if `uv tool install`ed) or
+`uv run --directory <repo> qai-mcp` (running from a clone). No network port, no auth
+token — it's a local subprocess the agent's own harness spawns and owns.
+
+### 3. Safety when handing an agent this tool
+
+`own_target=True` gates real submissions exactly like `--i-own-this-target` does on the
+CLI — an agent can call `qa_scan`/`qa_crawl` against any URL and safely get a read-only
+page model back; it must explicitly pass `own_target=True` to actually fuzz a non-local
+host. Don't grant `own_target=True` by default in an agent's system prompt/tool config
+unless every target it might be pointed at is one you own — see [Safety](#safety) below.
 
 ## How it works
 
