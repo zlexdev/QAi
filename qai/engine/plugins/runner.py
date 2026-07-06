@@ -10,17 +10,14 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable
-from typing import TypeVar
 
 from qai.engine.logging import get_logger
 from qai.engine.plugins.contracts import Check, CheckContext, CheckOutcome, CheckStatus
 
 _log = get_logger("plugins.runner")
 
-T = TypeVar("T")
 
-
-async def run_with_containment(
+async def run_with_containment[T](
     coro: Awaitable[T], timeout_s: float
 ) -> tuple[T | None, CheckStatus, str | None]:
     """Returns ``(result_or_None, status, error_message_or_None)`` — never raises."""
@@ -29,7 +26,7 @@ async def run_with_containment(
         return result, CheckStatus.OK, None
     except TimeoutError:
         return None, CheckStatus.TIMEOUT, f"exceeded {timeout_s}s"
-    except Exception as exc:  # noqa: BLE001 — plugin sandbox boundary, must never propagate
+    except Exception as exc:  # plugin sandbox boundary — must never crash the scan
         _log.exception("check_failed", error=str(exc))
         return None, CheckStatus.ERROR, str(exc)
 

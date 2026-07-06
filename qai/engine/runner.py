@@ -46,7 +46,9 @@ from qai.engine.explorer import Explorer
 from qai.engine.fuzzer.generator import DataGenerator, FuzzPlan
 from qai.engine.logging import get_logger
 from qai.engine.modeler import PageModeler
-from qai.engine.plugins import checks as _plugin_checks  # noqa: F401 — side-effect import: registers built-in checks
+from qai.engine.plugins import (
+    checks as _plugin_checks,  # noqa: F401 — side-effect import: registers built-in checks
+)
 from qai.engine.plugins.contracts import CheckContext
 from qai.engine.plugins.registry import iter_checks
 from qai.engine.plugins.runner import PluginRunner

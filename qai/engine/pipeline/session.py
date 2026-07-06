@@ -103,10 +103,11 @@ class SqliteSessionStore(SessionStore):
 
     async def create(self, ctx: PentestContext, steps: list[StepInfo]) -> str:
         session_id = uuid.uuid4().hex
+        steps_json = json.dumps([s.model_dump(mode="json") for s in steps])
         self._conn.execute(
             "INSERT INTO sessions (session_id, ctx_json, steps_json, cursor, updated_at) "
             "VALUES (?, ?, ?, ?, ?)",
-            (session_id, _ctx_to_json(ctx), json.dumps([s.model_dump(mode="json") for s in steps]), 0, time.time()),
+            (session_id, _ctx_to_json(ctx), steps_json, 0, time.time()),
         )
         self._conn.commit()
         return session_id

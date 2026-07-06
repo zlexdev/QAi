@@ -19,11 +19,19 @@ from qai.engine.capture import BrowserPool, CaptureSession
 from qai.engine.contracts import CookieSpec, CrawlBudget, RunReport
 from qai.engine.errors import InvalidCookieSpecError, InvalidStepConfigError, QaiError
 from qai.engine.logging import configure_logging
-from qai.engine.pipeline.contracts import AgentDirective, PentestContext, StepConfig, StepInfo
+from qai.engine.pipeline.contracts import (
+    AgentDirective,
+    PentestContext,
+    Stage,
+    StepConfig,
+    StepInfo,
+)
 from qai.engine.pipeline.pipeline import Pipeline
 from qai.engine.pipeline.session import SqliteSessionStore
-from qai.engine.pipeline.stages import CheckStage, ReconStage, Stage
-from qai.engine.plugins import checks as _plugin_checks  # noqa: F401 — side-effect import: registers built-in checks
+from qai.engine.pipeline.stages import CheckStage, ReconStage
+from qai.engine.plugins import (
+    checks as _plugin_checks,  # noqa: F401 — side-effect import: registers built-in checks
+)
 from qai.engine.plugins.registry import iter_checks
 from qai.engine.reporter import Reporter
 from qai.engine.runner import run_crawl, run_scan, validate_url
@@ -97,12 +105,6 @@ async def qa_scan(
             ``["security_headers"]``). ``None`` (default) runs none — identical
             behaviour to before this param existed, except the always-present
             ``plugin_findings: []`` field.
-
-    Returns:
-        JSON-encoded RunReport: run_id, forms_scanned, cases_executed, tabs_used,
-        safe_mode, findings[], plugin_findings[]. Each finding carries severity, kind,
-        detail, tab_id, and (if repo_path was given) source_location.file/line pointing
-        at the handler.
     """
     safe_mode = _resolve_safe_mode(url, own_target)
     try:
@@ -180,10 +182,6 @@ async def qa_crawl(
 
     See ``qa_scan`` for the ``own_target``/safe-mode rule and the ``cookies`` shape —
     both apply identically here, per discovered page.
-
-    Returns:
-        JSON-encoded CrawlReport: run_id, root_url, states_visited, pages (one RunReport
-        per page with a form), skipped_destructive, budget_exhausted_by, findings[].
     """
     safe_mode = _resolve_safe_mode(url, own_target)
     budget = CrawlBudget(
@@ -262,9 +260,6 @@ async def qa_pipeline_start(
         plugins: check stages to append after the fixed ``recon`` stage. ``None``
             defaults to ``["security_headers"]`` (the pilot's only check); pass ``[]``
             for a recon-only, single-stage pipeline.
-
-    Returns:
-        JSON-encoded PipelineState: session_id, steps (all pending), cursor=0.
     """
     del own_target  # reserved, see docstring
     try:
@@ -316,10 +311,6 @@ async def qa_pipeline_step(
             ``) — a mismatch raises ``InvalidStepConfigError``. Not yet consumed by any
             stage's ``__call__`` in this pilot (both pilot stages ignore it); validated
             eagerly so a caller gets fast feedback on a malformed payload.
-
-    Returns:
-        JSON-encoded PipelineState reflecting the new cursor/steps and this step's
-        ``last_step_output`` (new plugin findings, empty on skip/error/timeout).
     """
     try:
         pipeline = await _get_pipeline(session_id)
@@ -370,13 +361,13 @@ async def qa_pipeline_abort(session_id: str) -> str:
     try:
         await _SESSION_STORE.load(session_id)  # raises UnknownSessionError if gone
         live = _LIVE_PIPELINES.pop(session_id, None)
+        pool: BrowserPool | None
         if live is not None:
             _, pool, _session = live
-            await pool.close()
         else:
             pool = _SESSION_STORE.evict_pool(session_id)
-            if pool is not None:
-                await pool.close()
+        if pool is not None:
+            await pool.close()
         await _SESSION_STORE.delete(session_id)
     except QaiError as exc:
         return json.dumps({"error": str(exc), "error_type": type(exc).__name__})

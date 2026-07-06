@@ -13,9 +13,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Self, cast
 from urllib.parse import urlsplit
 
+from playwright._impl._api_structures import SetCookieParam
 from playwright.async_api import (
     APIRequestContext,
     Browser,
@@ -164,7 +165,10 @@ class CaptureSession:
         if self._cookies:
             # Applied before the first page/navigation exists — auth must be live for
             # Explorer/recon's very first request, not retrofitted after a login redirect.
-            await self._context.add_cookies([c.to_playwright() for c in self._cookies])
+            cookies_param: list[SetCookieParam] = [
+                cast(SetCookieParam, c.to_playwright()) for c in self._cookies
+            ]
+            await self._context.add_cookies(cookies_param)
         self._page = await self._context.new_page()
         await self._wire_listeners(self._page)
         await self._wire_cdp(self._page)
