@@ -67,9 +67,14 @@ class Explorer:
         self._allowlist = allowlist
         self._modeler = PageModeler()
         self._seen_hash_counts: dict[str, int] = {}
+        # Set once at construction, not inside crawl(), so run_crawl's post-discovery
+        # fuzz phase can share this same absolute deadline instead of the wall-clock
+        # budget only ever bounding discovery (fuzzing pages already found could still
+        # run unbounded past it).
+        self.deadline = time.monotonic() + budget.wall_clock_seconds
 
     async def crawl(self, root_url: str) -> ExplorerResult:
-        deadline = time.monotonic() + self._budget.wall_clock_seconds
+        deadline = self.deadline
         frontier: deque[tuple[list[CrawlAction], int]] = deque([([], 0)])
         result = ExplorerResult()
         # max_actions counts pages actually VISITED (root doesn't count against it),

@@ -320,6 +320,7 @@ class CrawlReport(BaseModel):
     states_visited: list[StateRef] = Field(default_factory=list)
     pages: list[RunReport] = Field(default_factory=list)
     pages_not_visited: list[SkippedPage] = Field(default_factory=list)
+    pages_not_fuzzed: list[SkippedPage] = Field(default_factory=list)
     skipped_destructive: list[CrawlAction] = Field(default_factory=list)
     budget_exhausted_by: str | None = None
 

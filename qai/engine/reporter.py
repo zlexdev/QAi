@@ -195,6 +195,7 @@ def _render_crawl_pages_markdown(report: CrawlReport) -> list[str]:
         f"- **Pages visited**: {len(report.states_visited)}"
         f" ({len(report.pages)} had a form and were fuzzed)",
         f"- **Pages not visited**: {len(report.pages_not_visited)}",
+        f"- **Pages not fuzzed (time budget)**: {len(report.pages_not_fuzzed)}",
         f"- **Destructive actions skipped**: {len(report.skipped_destructive)}",
     ]
     if report.budget_exhausted_by:
@@ -202,6 +203,7 @@ def _render_crawl_pages_markdown(report: CrawlReport) -> list[str]:
     lines.append("")
 
     pages_by_url = {p.target_url: p for p in report.pages}
+    not_fuzzed_urls = {p.url for p in report.pages_not_fuzzed}
     lines.append("## Pages visited")
     lines.append("")
     if not report.states_visited:
@@ -211,7 +213,10 @@ def _render_crawl_pages_markdown(report: CrawlReport) -> list[str]:
         lines.append(f"### {state.normalized_url}")
         lines.append("")
         if page is None:
-            lines.append("- No form found — modeled only, nothing to fuzz.")
+            if state.normalized_url in not_fuzzed_urls:
+                lines.append("- Has a form but not fuzzed — wall-clock budget exhausted.")
+            else:
+                lines.append("- No form found — modeled only, nothing to fuzz.")
         else:
             lines.append(
                 f"- Duration: {page.duration_seconds:.1f}s · Forms: {page.forms_scanned} · "

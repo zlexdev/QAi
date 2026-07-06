@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,6 +33,8 @@ from qai.engine.contracts import (
     PageModel,
     RequestTemplate,
     RunReport,
+    SkippedPage,
+    SkipReason,
 )
 from qai.engine.correlator import CodeCorrelator, build_route_table, require_repo
 from qai.engine.direct_executor import DirectExecutor, learn_template
@@ -330,12 +333,22 @@ async def run_crawl(
         ) as session:
             explorer = Explorer(session, active_budget, allowlist=allowlist)
             result = await explorer.crawl(root)
+            deadline = explorer.deadline
 
         # Fuzz Explorer's already-modeled pages directly — no second recon pass per
         # page (a plain run_scan(state.normalized_url, ...) call would re-navigate and
         # re-model a page Explorer just visited).
+        # Shares Explorer's own wall-clock deadline (bug: wall_clock_seconds used to
+        # bound only the discovery/BFS phase — fuzzing the pages found could still run
+        # arbitrarily long past the caller's budget).
+        pages_not_fuzzed: list[SkippedPage] = []
         for state, page_model in result.visited:
             if not page_model.forms:
+                continue
+            if time.monotonic() >= deadline:
+                pages_not_fuzzed.append(
+                    SkippedPage(url=state.normalized_url, reason=SkipReason.BUDGET_WALL_CLOCK)
+                )
                 continue
             page_started = datetime.now(UTC)
             if safe_mode:
@@ -382,8 +395,10 @@ async def run_crawl(
         states_visited=result.states,
         pages=pages,
         pages_not_visited=result.not_visited,
+        pages_not_fuzzed=pages_not_fuzzed,
         skipped_destructive=result.skipped_destructive,
-        budget_exhausted_by=result.budget_exhausted_by,
+        budget_exhausted_by=result.budget_exhausted_by
+        or ("wall_clock" if pages_not_fuzzed else None),
     )
     _log.info(
         "crawl_complete",

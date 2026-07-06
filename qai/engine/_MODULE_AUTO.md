@@ -13,7 +13,7 @@ _DETAIL_VALUE_PREVIEW = 80
 
 cls Analyzer
   # Stateless: consumes one (plan, effect) pair, emits zero or more Findings.
-  analyze(plan: FuzzPlan, effect: EffectBundle, submit_method: HttpMethod? = None) -> list[Finding]
+  analyze(plan: FuzzPlan, effect: EffectBundle, submit_method: HttpMethod? = None, page_origin: str? = None) -> list[Finding]
 
 _preview(value: str) -> str
   # Truncate a fuzz value for human-readable detail text (overflow cases are 100k chars).
@@ -116,9 +116,15 @@ cls Finding(BaseModel)
 
 cls RequestTemplate(BaseModel)
 
+cls SkipReason(StrEnum): BUDGET_MAX_ACTIONS, BUDGET_WALL_CLOCK, TRAP_DETECTED, REPLAY_FAILED
+
+cls SkippedPage(BaseModel)
+  # A page the crawler discovered a link/button to but never actually visited.
+
 cls RunReport(BaseModel)
   # Top-level result of one scan — the machine output consumed by CLI/MCP/CI.
   ok() -> bool
+  duration_seconds() -> float
 
 cls CrawlBudget(BaseModel)
 
@@ -126,6 +132,7 @@ cls CrawlReport(BaseModel)
   # Aggregates every visited state's RunReport plus the discovered state graph.
   findings() -> list[Finding]
   ok() -> bool
+  duration_seconds() -> float
   target_url() -> str
   forms_scanned() -> int
   cases_executed() -> int
@@ -224,13 +231,17 @@ cls FormExecutor
 # Explorer — the state-graph crawler's outer loop.
 
 _CLICK_SETTLE_MS = 500
+_UNKNOWN_TARGET = '(unknown — SPA action chain, not a direct link)'
+_FRONTIER_SAFETY_CAP = 2000
 
-cls ExplorerResult: visited: list[tuple[StateRef, PageModel]], states: list[StateRef], skipped_destructive: list[CrawlAction], budget_exhausted_by: str | None
+cls ExplorerResult: visited: list[tuple[StateRef, PageModel]], states: list[StateRef], skipped_destructive: list[CrawlAction], not_visited: list[SkippedPage], budget_exhausted_by: str | None
 
 cls Explorer
   # Crawls same-origin states reachable from a root URL, within a CrawlBudget.
   __init__(session: CaptureSession, budget: CrawlBudget) -> None
   async crawl(root_url: str) -> ExplorerResult
+
+_target_of(path: list[CrawlAction) -> str
 
 ```
 
@@ -250,6 +261,8 @@ get_logger(name: str) -> structlog.stdlib.BoundLogger
 ```
 # PageModeler — inventory of fields, types and form groups from a live page.
 
+_SELECTOR_FOR_JS = …
+_IS_VISIBLE_JS = …
 _EXTRACT_JS = …
 _DISCOVER_ACTIONS_JS = …
 
@@ -279,12 +292,19 @@ cls Reporter
   print_table(report: ScanReport, console: Console? = None) -> None
   write_json(report: ScanReport, path: Path) -> None
   write_html(report: ScanReport, path: Path) -> None
+  write_markdown(report: ScanReport, path: Path) -> None
 
 _severity_key(finding: Finding) -> int
 
 _render_html(report: ScanReport) -> str
 
 _table_or_empty(report: ScanReport, rows: str) -> str
+
+_render_markdown(report: ScanReport) -> str
+
+_render_run_fields_markdown(report: RunReport) -> list[str]
+
+_render_crawl_pages_markdown(report: CrawlReport) -> list[str]
 
 _finding_row(f: Finding) -> str
 
@@ -310,6 +330,8 @@ is_allowlisted(selector: str, allowlist: frozenset[str) -> bool
 _URL_RE = re.compile('^https?://', re.IGNORECASE)
 
 validate_url(url: str) -> str
+
+_flatten_fields(page_model: PageModel) -> list[FieldModel]
 
 async run_scan(url: str, repo_path: str? = None) -> RunReport
 
