@@ -1,4 +1,9 @@
-"""Pipeline — fixed-stage-list runner with step()/skip() + PipelineState projection."""
+"""Pipeline — runs a fixed ordered list of Stages one at a time.
+
+Each ``step()`` call advances the cursor by exactly one stage (or records a skip)
+instead of running the whole pipeline to completion, so an external agent driving
+it over MCP can inspect/inject context between stages.
+"""
 
 from __future__ import annotations
 
@@ -88,7 +93,7 @@ class Pipeline:
             self._steps[idx] = self._steps[idx].model_copy(
                 update={"status": StepStatus.DONE, "duration_ms": duration_ms}
             )
-        except Exception as exc:  # noqa: BLE001 — stage boundary, must not kill the session
+        except Exception as exc:  # stage sandbox boundary — must never crash the pipeline
             duration_ms = (time.monotonic() - start) * 1000
             _log.exception("stage_failed", stage=stage.name, error=str(exc))
             self._steps[idx] = self._steps[idx].model_copy(
