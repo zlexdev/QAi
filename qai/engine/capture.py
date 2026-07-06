@@ -237,6 +237,9 @@ class CaptureSession:
                 request_body=_truncate_body(req.post_data),
                 content_type=req.headers.get("content-type"),
                 started_at=datetime.now(UTC),
+                # Response.headers is a property (dict[str, str]) on Playwright's async
+                # API, not a coroutine — no await needed here.
+                response_headers=dict(response.headers),
             )
         )
 
@@ -287,16 +290,24 @@ class CaptureSession:
         self._page_error = None
         self._dom_errors = []
 
-    async def open(self, url: str) -> None:
+    async def open(self, url: str, *, capture_load: bool = False) -> None:
         """Navigate to the target URL with a timeout and one retry, then let a
-        Cloudflare JS challenge (if any) clear on its own before handing back control."""
+        Cloudflare JS challenge (if any) clear on its own before handing back control.
+
+        capture_load: when False (default, every existing caller), the requests seen
+        during this navigation are reset away — open() gives the next fill/submit a
+        clean "before" baseline to diff against. When True, the reset is skipped so a
+        wrapping ``capture()`` call can observe the navigation's own requests (recon's
+        one representative page-load response, needed by a plugin/check phase).
+        """
         last: Exception | None = None
         for attempt in (1, 2):
             try:
                 await self.page.goto(url, timeout=_NAV_TIMEOUT_MS, wait_until="domcontentloaded")
                 await self._wait_out_cloudflare()
                 await self._wait_networkidle_best_effort()
-                self._reset()
+                if not capture_load:
+                    self._reset()
                 self._pre_action_errors = await self._snapshot_dom_errors()
                 return
             except Exception as exc:

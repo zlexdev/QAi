@@ -32,6 +32,7 @@ from qai.engine.contracts import (
     FuzzIntent,
     HttpMethod,
     PageModel,
+    PluginFinding,
     RequestTemplate,
     RunReport,
     SkippedPage,
@@ -45,6 +46,10 @@ from qai.engine.explorer import Explorer
 from qai.engine.fuzzer.generator import DataGenerator, FuzzPlan
 from qai.engine.logging import get_logger
 from qai.engine.modeler import PageModeler
+from qai.engine.plugins import checks as _plugin_checks  # noqa: F401 — side-effect import: registers built-in checks
+from qai.engine.plugins.contracts import CheckContext
+from qai.engine.plugins.registry import iter_checks
+from qai.engine.plugins.runner import PluginRunner
 
 _log = get_logger("runner")
 _URL_RE = re.compile(r"^https?://", re.IGNORECASE)
@@ -72,6 +77,7 @@ async def run_scan(
     safe_mode: bool = False,
     direct_mode: bool = False,
     cookies: list[CookieSpec] | None = None,
+    plugins: list[str] | None = None,
 ) -> RunReport:
     """Execute the full Phase 0-3 pipeline against ``url`` and return a RunReport.
 
@@ -90,6 +96,10 @@ async def run_scan(
             navigation — lets a scan reach pages behind a login wall. Each cookie's own
             ``domain`` decides which requests carry it, so cookies for a separate
             auth/SSO subdomain can be supplied alongside the main target's.
+        plugins: names of registered check plugins to run as an extra pass against the
+            recon page/response (e.g. ``["security_headers"]``). ``None`` (default)
+            runs none — byte-for-byte identical output to before this param existed,
+            except the always-present ``plugin_findings: []`` field.
     """
     url = validate_url(url)
     run_id = uuid.uuid4().hex[:12]
@@ -106,8 +116,9 @@ async def run_scan(
     pool = await BrowserPool.create(headless=headless)
     stability_cache: dict[str, float] = {}
     try:
-        page_model = await _recon(url, run_id, pool, stability_cache, cookies)
+        page_model, recon_effect = await _recon(url, run_id, pool, stability_cache, cookies)
         forms_scanned = len(page_model.forms)
+        plugin_findings = await _run_plugins(plugins, page_model, recon_effect, repo_path, cookies)
 
         if safe_mode or not page_model.forms:
             return RunReport(
@@ -121,6 +132,7 @@ async def run_scan(
                 safe_mode=safe_mode,
                 fields_examined=_flatten_fields(page_model),
                 findings=[],
+                plugin_findings=plugin_findings,
             )
 
         findings, cases_executed, workers, har_paths = await _fuzz_page_model(
@@ -151,6 +163,7 @@ async def run_scan(
         har_paths=har_paths,
         fields_examined=_flatten_fields(page_model),
         findings=findings,
+        plugin_findings=plugin_findings,
     )
     _log.info(
         "scan_complete",
@@ -169,8 +182,14 @@ async def _recon(
     pool: BrowserPool,
     stability_cache: dict[str, float],
     cookies: list[CookieSpec] | None = None,
-) -> PageModel:
-    """One-off session that only models the page — never fills or submits anything."""
+) -> tuple[PageModel, EffectBundle]:
+    """One-off session that models the page — never fills or submits anything.
+
+    Also captures one EffectBundle (the page-load response) so a plugin phase has real
+    response headers to inspect. Headers don't vary per fuzz payload, so the root page
+    load's response is sufficient for a header check — narrower than threading
+    EffectBundles through the whole fuzz-worker fan-out.
+    """
     modeler = PageModeler()
     async with CaptureSession(
         run_id=run_id,
@@ -179,8 +198,27 @@ async def _recon(
         stability_cache=stability_cache,
         cookies=cookies,
     ) as session:
-        await session.open(url)
-        return await modeler.model(session.page)
+        effect = await session.capture("recon", lambda: session.open(url, capture_load=True))
+        page_model = await modeler.model(session.page)
+        return page_model, effect
+
+
+async def _run_plugins(
+    plugins: list[str] | None,
+    page_model: PageModel,
+    recon_effect: EffectBundle,
+    repo_path: str | None,
+    cookies: list[CookieSpec] | None,
+) -> list[PluginFinding]:
+    """Runs the named check plugins against the recon page/response. ``plugins=None``
+    (the default) is a no-op — this is what makes the param backward-compatible."""
+    if not plugins:
+        return []
+    check_ctx = CheckContext(
+        page=page_model, effects=[recon_effect], cookies=cookies, repo_path=repo_path
+    )
+    outcomes = await PluginRunner(iter_checks(plugins)).run(check_ctx)
+    return [f for outcome in outcomes for f in outcome.findings]
 
 
 async def _fuzz_page_model(

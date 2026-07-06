@@ -1,0 +1,58 @@
+"""Isolation primitive + PluginRunner — bounded fan-out over registered checks.
+
+``run_with_containment`` is shared by BOTH ``PluginRunner`` (the background pass inside
+``run_scan``) and ``CheckStage`` (the externally-driven pipeline) so the timeout+catch-all
+shape is written once.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from collections.abc import Awaitable
+from typing import TypeVar
+
+from qai.engine.logging import get_logger
+from qai.engine.plugins.contracts import Check, CheckContext, CheckOutcome, CheckStatus
+
+_log = get_logger("plugins.runner")
+
+T = TypeVar("T")
+
+
+async def run_with_containment(
+    coro: Awaitable[T], timeout_s: float
+) -> tuple[T | None, CheckStatus, str | None]:
+    """Returns ``(result_or_None, status, error_message_or_None)`` — never raises."""
+    try:
+        result = await asyncio.wait_for(coro, timeout=timeout_s)
+        return result, CheckStatus.OK, None
+    except TimeoutError:
+        return None, CheckStatus.TIMEOUT, f"exceeded {timeout_s}s"
+    except Exception as exc:  # noqa: BLE001 — plugin sandbox boundary, must never propagate
+        _log.exception("check_failed", error=str(exc))
+        return None, CheckStatus.ERROR, str(exc)
+
+
+class PluginRunner:
+    def __init__(self, checks: list[Check]) -> None:
+        self._checks = checks
+
+    async def run(self, ctx: CheckContext) -> list[CheckOutcome]:
+        async def _one(check: Check) -> CheckOutcome:
+            start = time.monotonic()
+            findings, status, error = await run_with_containment(
+                check.run(ctx, None), check.timeout_s
+            )
+            return CheckOutcome(
+                plugin=check.name,
+                status=status,
+                findings=findings or [],
+                duration_ms=(time.monotonic() - start) * 1000,
+                error=error,
+            )
+
+        # Safe WITHOUT return_exceptions=True: _one() itself never raises, because
+        # run_with_containment already caught everything. Satisfies "never bare gather"
+        # by construction, not by the flag.
+        return list(await asyncio.gather(*(_one(c) for c in self._checks)))

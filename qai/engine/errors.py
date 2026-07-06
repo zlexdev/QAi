@@ -41,3 +41,31 @@ class RouteResolveError(QaiError):
         super().__init__(f"route resolve failed for {route!r}: {cause}")
         self.route = route
         self.cause = cause
+
+
+class UnknownCheckError(QaiError):
+    """A ``plugins=[...]`` entry doesn't match any registered check."""
+
+    def __init__(self, name: str, available: list[str]) -> None:
+        super().__init__(f"unknown check {name!r}, available: {available}")
+        self.name = name
+        self.available = available
+
+
+class UnknownSessionError(QaiError):
+    """A pipeline session_id has no matching SQLite row (never existed, expired, or aborted)."""
+
+    def __init__(self, session_id: str) -> None:
+        super().__init__(f"unknown or expired pipeline session {session_id!r}")
+        self.session_id = session_id
+
+
+class InvalidStepConfigError(QaiError):
+    """A ``config`` payload's ``stage`` discriminator doesn't match the pipeline's current stage."""
+
+    def __init__(self, expected_stage: str, got_stage: str) -> None:
+        super().__init__(
+            f"config for stage {got_stage!r} does not match current stage {expected_stage!r}"
+        )
+        self.expected_stage = expected_stage
+        self.got_stage = got_stage

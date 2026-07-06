@@ -137,6 +137,7 @@ class CapturedRequest(BaseModel):
     request_body: str | None = None
     content_type: str | None = None
     started_at: datetime | None = None
+    response_headers: dict[str, str] | None = None
 
 
 class EffectBundle(BaseModel):
@@ -275,6 +276,21 @@ class SkippedPage(BaseModel):
     reason: SkipReason
 
 
+class PluginFinding(BaseModel):
+    """A finding from a check plugin — kept separate from Finding so the core FindingKind
+    enum stays closed; plugin categories are free-form, not enum members."""
+
+    model_config = _FROZEN
+    plugin: str
+    category: str
+    severity: Severity
+    title: str
+    detail: str
+    request: CapturedRequest | None = None
+    source_location: SourceRef | None = None
+    evidence: dict[str, str] = Field(default_factory=dict)
+
+
 class RunReport(BaseModel):
     """Top-level result of one scan — the machine output consumed by CLI/MCP/CI."""
 
@@ -291,6 +307,7 @@ class RunReport(BaseModel):
     safe_mode: bool = False
     fields_examined: list[FieldModel] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
+    plugin_findings: list[PluginFinding] = Field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -363,6 +380,10 @@ class CrawlReport(BaseModel):
     @property
     def findings(self) -> list[Finding]:
         return [f for page in self.pages for f in page.findings]
+
+    @property
+    def plugin_findings(self) -> list[PluginFinding]:
+        return [f for page in self.pages for f in page.plugin_findings]
 
     @property
     def ok(self) -> bool:

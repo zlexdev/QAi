@@ -13,7 +13,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from qai.engine.contracts import CrawlReport, Finding, RunReport, ScanReport, Severity
+from qai.engine.contracts import CrawlReport, Finding, PluginFinding, RunReport, ScanReport, Severity
 
 
 def _severity_key(finding: Finding) -> int:
@@ -61,6 +61,24 @@ class Reporter:
         style = "bold green" if report.ok else "bold red"
         console.print(f"[{style}]{summary}[/{style}]")
 
+        if report.plugin_findings:
+            plugin_table = Table(title="Plugin findings")
+            plugin_table.add_column("Sev")
+            plugin_table.add_column("Plugin")
+            plugin_table.add_column("Category")
+            plugin_table.add_column("Title")
+            plugin_table.add_column("Detail", overflow="fold")
+            for pf in sorted(report.plugin_findings, key=lambda f: _SEVERITY_ORDER[f.severity]):
+                pstyle = _SEVERITY_STYLE[pf.severity]
+                plugin_table.add_row(
+                    f"[{pstyle}]{_SEVERITY_DOT[pf.severity]} {pf.severity.value}[/{pstyle}]",
+                    pf.plugin,
+                    pf.category,
+                    pf.title,
+                    pf.detail,
+                )
+            console.print(plugin_table)
+
     def write_json(self, report: ScanReport, path: Path) -> None:
         path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
 
@@ -72,8 +90,13 @@ class Reporter:
 
     def write_findings(self, report: ScanReport, path: Path) -> None:
         """Findings only, no page/state/timing noise — for a quick "were there any
-        errors at all" check without wading through the full report."""
-        payload = [f.model_dump(mode="json") for f in report.findings]
+        errors at all" check without wading through the full report. Tagged with a
+        ``source`` key (``core`` vs ``plugin``) so consumers can distinguish them in the
+        one flat JSON array."""
+        payload = [{"source": "core", **f.model_dump(mode="json")} for f in report.findings]
+        payload += [
+            {"source": "plugin", **f.model_dump(mode="json")} for f in report.plugin_findings
+        ]
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
@@ -135,6 +158,7 @@ def _render_html(report: ScanReport) -> str:
   <span class="status">{status}</span>
 </header>
 {_table_or_empty(report, rows)}
+{_plugin_section_html(report)}
 </body>
 </html>"""
 
@@ -148,6 +172,31 @@ def _table_or_empty(report: ScanReport, rows: str) -> str:
 {rows}
   </tbody>
 </table>"""
+
+
+def _plugin_section_html(report: ScanReport) -> str:
+    if not report.plugin_findings:
+        return ""
+    ordered = sorted(report.plugin_findings, key=lambda f: _SEVERITY_ORDER[f.severity])
+    rows = "\n".join(_plugin_finding_row(f) for f in ordered)
+    return f"""<h2 style="margin-top:32px;font-size:18px;font-weight:600;">Plugin findings</h2>
+<table>
+  <thead><tr><th>Severity</th><th>Plugin</th><th>Category</th><th>Title</th><th>Detail</th></tr></thead>
+  <tbody>
+{rows}
+  </tbody>
+</table>"""
+
+
+def _plugin_finding_row(f: PluginFinding) -> str:
+    color = _SEVERITY_COLOR[f.severity]
+    return f"""    <tr>
+      <td class="sev" style="color:{color}">{f.severity.value}</td>
+      <td>{html.escape(f.plugin)}</td>
+      <td>{html.escape(f.category)}</td>
+      <td>{html.escape(f.title)}</td>
+      <td class="detail">{html.escape(f.detail)}</td>
+    </tr>"""
 
 
 def _render_markdown(report: ScanReport) -> str:
@@ -171,19 +220,32 @@ def _render_markdown(report: ScanReport) -> str:
 
     if not report.findings:
         lines.append("No findings — every case behaved as expected.")
-        return "\n".join(lines) + "\n"
+    else:
+        lines.append("## Findings")
+        lines.append("")
+        lines.append("| Severity | Kind | Field | Intent | Detail | Source |")
+        lines.append("|---|---|---|---|---|---|")
+        for f in sorted(report.findings, key=_severity_key):
+            source = (
+                f"{f.source_location.file}:{f.source_location.line}" if f.source_location else "-"
+            )
+            detail = f.detail.replace("|", "\\|").replace("\n", " ")
+            lines.append(
+                f"| {f.severity.value} | {f.kind.value} | `{f.field_selector or '-'}` "
+                f"| {f.intent.value if f.intent else '-'} | {detail} | `{source}` |"
+            )
+        lines.append("")
 
-    lines.append("## Findings")
-    lines.append("")
-    lines.append("| Severity | Kind | Field | Intent | Detail | Source |")
-    lines.append("|---|---|---|---|---|---|")
-    for f in sorted(report.findings, key=_severity_key):
-        source = f"{f.source_location.file}:{f.source_location.line}" if f.source_location else "-"
-        detail = f.detail.replace("|", "\\|").replace("\n", " ")
-        lines.append(
-            f"| {f.severity.value} | {f.kind.value} | `{f.field_selector or '-'}` "
-            f"| {f.intent.value if f.intent else '-'} | {detail} | `{source}` |"
-        )
+    if report.plugin_findings:
+        lines.append("## Plugin findings")
+        lines.append("")
+        lines.append("| Severity | Plugin | Category | Title | Detail |")
+        lines.append("|---|---|---|---|---|")
+        for pf in sorted(report.plugin_findings, key=lambda f: _SEVERITY_ORDER[f.severity]):
+            detail = pf.detail.replace("|", "\\|").replace("\n", " ")
+            lines.append(f"| {pf.severity.value} | {pf.plugin} | {pf.category} | {pf.title} | {detail} |")
+        lines.append("")
+
     return "\n".join(lines) + "\n"
 
 
