@@ -1,0 +1,49 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "qai demo target", "version": "1.0.0" },
+  "paths": {
+    "/api/search": {
+      "get": {
+        "operationId": "searchItems",
+        "parameters": [
+          { "name": "q", "in": "query", "required": false, "schema": { "type": "string" } },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 0, "maximum": 100 }
+          }
+        ],
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/api/echo": {
+      "post": {
+        "operationId": "echoPayload",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["message"],
+                "properties": {
+                  "message": { "type": "string", "maxLength": 200 }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/api/items/{item_id}": {
+      "get": {
+        "operationId": "getItem",
+        "parameters": [
+          { "name": "item_id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}

@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 mcp = ["mcp>=1.2"]
 demo = ["fastapi>=0.115", "uvicorn[standard]>=0.32"]
+apispec = ["pyyaml>=6.0"]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",

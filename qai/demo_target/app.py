@@ -9,7 +9,7 @@ Run: ``uvicorn qai.demo_target.app:app --port 8000``
 
 from __future__ import annotations
 
-from fastapi import Cookie, FastAPI, Form
+from fastapi import Body, Cookie, FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 app = FastAPI(title="qai demo target")
@@ -94,11 +94,26 @@ async def login_form() -> str:
     return _LOGIN_HTML
 
 
-@app.post("/login")
+@app.post("/login", response_model=None)
 async def login(
     username: str = Form(...), password: str = Form(...)
-) -> RedirectResponse:
+) -> HTMLResponse | RedirectResponse:
+    if username != "admin" or password != "secret":
+        # Stays on /login (no redirect) — the URL-changed success heuristic must see a
+        # real difference between a successful and a failed login attempt.
+        return HTMLResponse(_LOGIN_HTML, status_code=401)
     response = RedirectResponse(url="/protected", status_code=303)
-    if username == "admin" and password == "secret":
-        response.set_cookie("session", _SESSION_TOKEN)
+    response.set_cookie("session", _SESSION_TOKEN)
     return response
+
+
+@app.get("/api/search")
+async def api_search(q: str = "", limit: int = 10) -> dict[str, object]:
+    """Bundled OpenAPI-spec route (see openapi.json) — fuzzable query params."""
+    return {"query": q, "limit": limit, "results": []}
+
+
+@app.post("/api/echo")
+async def api_echo(payload: dict[str, str] = Body(...)) -> dict[str, object]:
+    """Bundled OpenAPI-spec route (see openapi.json) — fuzzable JSON body field."""
+    return {"echoed": payload}

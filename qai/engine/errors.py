@@ -79,3 +79,21 @@ class InvalidStepConfigError(QaiError):
         )
         self.expected_stage = expected_stage
         self.got_stage = got_stage
+
+
+class InvalidSpecError(QaiError):
+    """A ``--spec`` file failed to parse as OpenAPI or GraphQL."""
+
+    def __init__(self, source: str, reason: str) -> None:
+        super().__init__(f"invalid API spec {source!r}: {reason}")
+        self.source = source
+        self.reason = reason
+
+
+class LoginFailedError(QaiError):
+    """record_login/replay_login's success_indicator never matched."""
+
+    def __init__(self, login_url: str, reason: str) -> None:
+        super().__init__(f"login failed at {login_url!r}: {reason}")
+        self.login_url = login_url
+        self.reason = reason

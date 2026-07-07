@@ -112,6 +112,7 @@ class CaptureSession:
         pool: BrowserPool | None = None,
         stability_cache: dict[str, float] | None = None,
         cookies: list[CookieSpec] | None = None,
+        default_headers: dict[str, str] | None = None,
     ) -> None:
         self._headless = headless
         self._run_id = run_id
@@ -119,6 +120,7 @@ class CaptureSession:
         self._har_path = har_path
         self._pool = pool
         self._cookies = cookies or []
+        self._default_headers = default_headers
         # origin -> observed DOM-stability settle time (seconds); shared across tabs in
         # the same run so only the FIRST load of a given origin pays the full poll cap.
         self._stability_cache = stability_cache if stability_cache is not None else {}
@@ -161,7 +163,9 @@ class CaptureSession:
         else:
             self._pw = await async_playwright().start()
             self._browser = await self._pw.chromium.launch(headless=self._headless)
-        self._context = await self._browser.new_context(record_har_path=self._har_path)
+        self._context = await self._browser.new_context(
+            record_har_path=self._har_path, extra_http_headers=self._default_headers
+        )
         if self._cookies:
             # Applied before the first page/navigation exists — auth must be live for
             # Explorer/recon's very first request, not retrofitted after a login redirect.
@@ -391,6 +395,26 @@ class CaptureSession:
             return set(texts)
         except Exception:
             return set()
+
+    async def cookies(self) -> list[CookieSpec]:
+        """Reads the LIVE browser context's current cookie jar (inverse of
+        ``CookieSpec.to_playwright()``) — used by ``auth/recorder.py`` to read back
+        the session's cookies right after a successful login."""
+        if self._context is None:
+            raise CaptureError(url="-", cause="session not opened")
+        raw_cookies = await self._context.cookies()
+        return [
+            CookieSpec(
+                name=c["name"],
+                value=c["value"],
+                domain=c["domain"],
+                path=c.get("path", "/"),
+                secure=c.get("secure", False),
+                http_only=c.get("httpOnly", False),
+                same_site=c.get("sameSite", "Lax"),
+            )
+            for c in raw_cookies
+        ]
 
     async def capture(
         self, action_id: str, action: Callable[[], Awaitable[None]]

@@ -320,27 +320,48 @@ async def _run_worker(
         await session.open(url)
         analyzer = Analyzer()
         for form, plan in bucket:
-            template = templates.get(form.group_id) if direct_mode else None
-            used_ui = template is None
-            if template is not None:
-                effect = await DirectExecutor(session, template).run(plan)
-            else:
-                effect = await executor.run(form, plan)
-                if direct_mode and form.group_id not in templates and plan.case.intent is FuzzIntent.VALID:
-                    templates[form.group_id] = _learn_from_effect(form, effect)
+            findings.extend(
+                await _fuzz_form(
+                    session, executor, analyzer, templates, correlator, url, form, plan, direct_mode
+                )
+            )
+    return findings
 
-            for finding in analyzer.analyze(
-                plan, effect, submit_method=form.method, page_origin=url
-            ):
-                if correlator is not None and finding.request is not None:
-                    source = correlator.correlate(finding.request)
-                    finding = finding.model_copy(update={"source_location": source})
-                findings.append(finding)
 
-            if used_ui:
-                # Only UI-driven cases touch the DOM — a reload keeps the next case's
-                # baseline fields clean. Direct-request cases never navigate.
-                await session.open(url)
+async def _fuzz_form(
+    session: CaptureSession,
+    executor: FormExecutor,
+    analyzer: Analyzer,
+    templates: dict[str, RequestTemplate | None],
+    correlator: CodeCorrelator | None,
+    url: str,
+    form: FormModel,
+    plan: FuzzPlan,
+    direct_mode: bool,
+) -> list[Finding]:
+    """Runs ONE fuzz case against ``form`` and returns its findings. Extracted from
+    ``_run_worker``'s per-form loop, behavior-identical (plan `05-risks.md` R-8) —
+    ``templates`` is mutated in place, same aliasing as before extraction."""
+    template = templates.get(form.group_id) if direct_mode else None
+    used_ui = template is None
+    if template is not None:
+        effect = await DirectExecutor(session, template).run(plan)
+    else:
+        effect = await executor.run(form, plan)
+        if direct_mode and form.group_id not in templates and plan.case.intent is FuzzIntent.VALID:
+            templates[form.group_id] = _learn_from_effect(form, effect)
+
+    findings: list[Finding] = []
+    for finding in analyzer.analyze(plan, effect, submit_method=form.method, page_origin=url):
+        if correlator is not None and finding.request is not None:
+            source = correlator.correlate(finding.request)
+            finding = finding.model_copy(update={"source_location": source})
+        findings.append(finding)
+
+    if used_ui:
+        # Only UI-driven cases touch the DOM — a reload keeps the next case's
+        # baseline fields clean. Direct-request cases never navigate.
+        await session.open(url)
     return findings
 
 
