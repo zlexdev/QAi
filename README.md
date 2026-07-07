@@ -5,7 +5,8 @@ Autonomous web-form fuzzer. Give it a `URL` + a repo, it finds a bug in a form
 backend where it lives — no manual test writing, no AI/paid APIs.
 
 Full usage guide: **[docs/USAGE.md](docs/USAGE.md)**. Architecture background:
-[PLAN.md](PLAN.md) / [mini-plat.md](mini-plat.md).
+[PLAN.md](PLAN.md) / [mini-plat.md](mini-plat.md). Writing a check plugin:
+[docs/PLUGINS.md](docs/PLUGINS.md).
 
 ```
 URL → page model (fields+types) → fuzz matrix per form → capture effects

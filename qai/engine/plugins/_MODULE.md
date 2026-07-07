@@ -3,6 +3,8 @@
 Check-plugin registry — pentest-style analysis families (security headers, auth-bypass,
 IDOR, injection) attach as extra passes without touching the core fuzz oracle.
 
+Full walkthrough with a worked example: [docs/PLUGINS.md](../../../docs/PLUGINS.md).
+
 ## Adding a check
 
 1. Subclass `Check` (`contracts.py`) — set `name`, `kind` (`PASSIVE` or `ACTIVE`), optionally

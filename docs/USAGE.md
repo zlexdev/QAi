@@ -254,14 +254,43 @@ uv run qai-mcp
 ```
 
 Point your MCP client (Claude Code, another agent harness) at `qai-mcp` over stdio.
-Three tools:
+Seven tools:
 
-- **`qa_scan(url, repo_path=None, headless=True, parallel=1, har_dir=None, own_target=False, direct_mode=False, cookies=None)`**
-  → JSON `RunReport`.
+- **`qa_scan(url, repo_path=None, headless=True, parallel=1, har_dir=None, own_target=False, direct_mode=False, cookies=None, plugins=None)`**
+  → JSON `RunReport`. `plugins` runs registered check plugins (e.g. `["security_headers"]`)
+  as an extra pass alongside the fuzz oracle — see [docs/PLUGINS.md](PLUGINS.md); `None`
+  (default) runs none, identical behaviour to before the param existed except the
+  always-present `plugin_findings: []` field.
 - **`qa_scan_html(url, repo_path=None, out_path="qai-report.html", headless=True, parallel=1, own_target=False)`**
   → JSON summary + a written HTML report path.
 - **`qa_crawl(url, repo_path=None, headless=True, max_depth=2, max_actions=50, wall_clock_seconds=180, allow_destructive=None, parallel=1, own_target=False, direct_mode=False, cookies=None)`**
   → JSON `CrawlReport` (BFS-discovered pages, each fuzzed; see Crawl mode above).
+
+### Driven pipeline (resumable, externally-steered)
+
+Unlike `qa_scan`, this opens ONE live browser session that persists across calls — an
+agent drives it one stage at a time, inspecting each step's output before deciding
+whether to inject context, skip, or configure the next step. No internal LLM — the
+calling agent supplies the judgment, qai supplies the mechanism.
+
+- **`qa_pipeline_start(url, repo_path=None, headless=True, own_target=False, cookies=None, plugins=None)`**
+  → JSON `PipelineState` (`session_id`, `steps` all pending, `cursor=0`). `plugins`
+  defaults to `["security_headers"]`; pass `[]` for a recon-only, single-stage pipeline.
+- **`qa_pipeline_step(session_id, inject=None, skip=False, config=None)`**
+  → runs (or skips) exactly one stage, advancing the cursor by one. `inject` is an
+  `AgentDirective` dict (`notes`/`focus_selectors`/`focus_params`/`hints`) appended to
+  the context for the current and any later non-skipped stage to read.
+  → JSON `PipelineState` including this step's `last_step_output` (new plugin findings).
+- **`qa_pipeline_report(session_id)`** → JSON `RunReport`-shaped projection of the
+  session's current findings. Does not tear the session down.
+- **`qa_pipeline_abort(session_id)`** → frees the live browser and deletes the session.
+
+Session state (context/steps/cursor) is persisted to SQLite under `qai-reports/`, so a
+killed-and-restarted MCP process can resume a pipeline from its last completed step; the
+live browser itself can't survive a restart (it's a live Playwright handle), so it
+re-opens fresh at the target URL before the next `qa_pipeline_step` runs. See
+[docs/PLUGINS.md](PLUGINS.md) for how a `Check` you write becomes a pipeline stage
+automatically via the generic `CheckStage` adapter.
 
 `cookies` is a list of dicts (`{"name": ..., "value": ..., "domain": ..., "path": "/", "secure": false, "http_only": false, "same_site": "Lax"}` — only `name`/`value`/`domain` required), injected before any navigation so the scan/crawl can reach pages behind a login wall. Each cookie's own `domain` decides which requests carry it, so a separate auth/SSO subdomain's cookie can be listed alongside the main target's.
 
