@@ -5,7 +5,7 @@ optional ``apispec`` extra (``pyyaml``) — see plan `05-risks.md` R-6."""
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 from qai.engine.apispec.contracts import ApiOperation, ApiParam, ApiSpecKind
 from qai.engine.contracts import FieldConstraints, FieldKind, HttpMethod
@@ -63,23 +63,24 @@ def _params_from_parameters(parameters: list[dict[str, Any]]) -> list[ApiParam]:
     out: list[ApiParam] = []
     for p in parameters:
         schema = p.get("schema", {})
-        location = p.get("in", "query")
-        location = location if location in {"path", "query"} else "query"
+        raw_location = p.get("in", "query")
+        location: Literal["path", "query"] = raw_location if raw_location == "path" else "query"
         out.append(
             ApiParam(
                 name=p["name"],
                 kind=_param_kind(schema),
                 required=bool(p.get("required", False)),
                 constraints=_param_constraints(schema, bool(p.get("required", False))),
-                location=location,  # type: ignore[arg-type]
+                location=location,
             )
         )
     return out
 
 
 def _params_from_request_body(request_body: dict[str, Any]) -> list[ApiParam]:
-    content = request_body.get("content", {})
-    body_schema = next(iter(content.values()), {}).get("schema", {})
+    content: dict[str, Any] = request_body.get("content", {})
+    default_media: dict[str, Any] = {}
+    body_schema = next(iter(content.values()), default_media).get("schema", {})
     required_fields = set(body_schema.get("required", []))
     properties: dict[str, Any] = body_schema.get("properties", {})
     return [

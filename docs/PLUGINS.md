@@ -18,16 +18,16 @@ class Check(ABC):
     timeout_s: float = 10.0         # your own budget — a slow check gets cut off, not the scan
 
     @abstractmethod
-    async def run(self, ctx: CheckContext, replay: object | None = None) -> list[PluginFinding]:
+    async def run(self, ctx: CheckContext, replay: "ReplayClient | None" = None) -> list[PluginFinding]:
         ...
 ```
 
 - **`PASSIVE`** — reads what was already captured (`ctx.effects: list[EffectBundle]`,
   each carrying `requests: list[CapturedRequest]` with `response_headers`). No extra
-  network calls. This is the only kind the pilot ships (`security_headers`).
-- **`ACTIVE`** — issues its own extra requests (e.g. an IDOR replay with a mutated id).
-  Needs a `replay` handle — not built yet; deferred until the first active check lands
-  (it will need `safe_mode`/`own_target` gating, same as destructive crawl actions).
+  network calls (`security_headers`).
+- **`ACTIVE`** — issues its own extra requests via a real `ReplayClient` (e.g. `idor`'s
+  adjacent-id replay, `auth_bypass`'s auth-stripped re-fire). Gated by
+  `ctx.safe_mode: bool` (fail-safe default `True`) — see "Active checks" below.
 
 `CheckContext` is a frozen DTO: the page model, captured effects, cookies, `repo_path`,
 and any `AgentDirective`s an external agent injected between pipeline steps (`notes`,
@@ -148,26 +148,57 @@ await qa_pipeline_start(url, plugins=["security_headers"])   # stages: [recon, s
 await qa_pipeline_step(session_id)                            # runs recon
 await qa_pipeline_step(session_id, inject={"notes": "..."})   # runs your check, one step at a time
 ```
-`CheckStage(check=SecurityHeadersCheck())` wraps any `Check` instance as a `Stage` —
+`CheckStage(check=SecurityHeadersCheck(), session=session)` wraps any `Check` instance
+as a `Stage` (the `session` param is what an `ACTIVE` stage's `ReplayClient` binds to) —
 an external agent (Claude Code, or any MCP client) can inspect each step's output,
 inject an `AgentDirective`, or skip your check entirely before deciding to run it.
 
 Neither mode's code needs to know your check exists in advance — both resolve checks
 by name through the same registry.
 
-## Active checks (not yet built)
+## Active checks
 
-`CheckKind.ACTIVE` and the `replay` parameter are reserved for checks that fire their
-own extra requests (IDOR replay with a mutated id, auth-bypass re-fire without
-cookies). Building one will need:
-- A `ReplayClient` type (the `replay: object | None` parameter is a placeholder for
-  this — it will become `ReplayClient | None` once the first active check lands).
-- Gating behind `safe_mode`/`own_target`, the same rule that already protects
-  destructive crawl actions — an active check is an attacker and must not fire against
-  a target the caller doesn't own.
+`CheckKind.ACTIVE` checks fire their own extra requests via `ReplayClient`
+(`qai/engine/plugins/replay.py`) — a thin wrapper over the SAME `CaptureSession`
+recon already opened, no second browser/session spin-up:
 
-This is scoped out of the current pilot (see `.plans/pentest-plugins-and-driven-pipeline/00-decisions.md`)
-deliberately — don't build it speculatively; wait until a concrete active check needs it.
+```python
+class ReplayClient:
+    def __init__(self, session: CaptureSession) -> None: ...
+
+    async def fire(
+        self, method: HttpMethod, url: str, *,
+        body: str | None = None, headers: dict[str, str] | None = None,
+        strip_auth: bool = False,
+    ) -> CapturedRequest: ...
+```
+
+`strip_auth=True` sends the request with no `Cookie`/`Authorization` header — used by
+`auth_bypass` — **without mutating the session's own cookie jar** (a normal request
+fired right after still carries the original cookies). `fire()` never touches the
+session's live browser context state.
+
+**Safety gate (this is the part you don't write):** `PluginRunner`/`CheckStage` both
+check `ctx.safe_mode` BEFORE calling any `ACTIVE` check's `run()` — when `True` (the
+fail-safe default), the check is SKIPPED (`CheckOutcome(status=SKIPPED)`), `run()` is
+never invoked, and `replay` is never constructed. Your `ACTIVE` check never needs to
+self-gate; write it exactly like a `PASSIVE` check and trust that it only ever runs
+when the caller passed `own_target=True` (or the target is localhost).
+
+Two built-in examples (`qai/engine/plugins/checks/idor.py`,
+`qai/engine/plugins/checks/auth_bypass.py`):
+- `IdorCheck` groups `ctx.effects[].requests[]` by `qai.engine.state.url_template()`,
+  mutates a numeric id segment (±1, or any other id observed elsewhere in the same
+  session), and flags a `PluginFinding(category="idor_candidate", severity=MEDIUM)`
+  when the mutated-id response looks like a normal 200 (see
+  `qai/engine/plugins/checks/differential.py`'s `similar_shape()` heuristic).
+- `AuthBypassCheck` re-fires each captured 200 request with `strip_auth=True` and
+  flags `category="auth_bypass"`/`severity=HIGH` when the response is STILL a normal
+  200 without auth — i.e. the endpoint wasn't actually enforcing it.
+
+Both heuristics are documented as candidates to verify manually, not certainties (an
+intentionally-public endpoint or a legitimately sequential-id public resource can
+false-positive) — see the plan's `05-risks.md` R-1/R-2 for the full disclaimer.
 
 ## Layering rule
 

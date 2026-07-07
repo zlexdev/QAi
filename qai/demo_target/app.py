@@ -67,12 +67,12 @@ async def admin_stats() -> dict[str, object]:
     return {"users": len(_ITEMS), "signups": len(_SIGNUPS)}
 
 
-@app.get("/protected", response_class=HTMLResponse)
-async def protected(session: str | None = Cookie(default=None)) -> str:
+@app.get("/protected", response_model=None)
+async def protected(session: str | None = Cookie(default=None)) -> HTMLResponse:
     # Properly-protected route (contrast fixture for AuthBypassCheck's negative case).
     if session != _SESSION_TOKEN:
         return HTMLResponse("forbidden", status_code=403)
-    return "<html><body>welcome, admin</body></html>"
+    return HTMLResponse("<html><body>welcome, admin</body></html>")
 
 
 _SESSION_TOKEN = "demo-session-abc123"

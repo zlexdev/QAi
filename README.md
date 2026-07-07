@@ -78,18 +78,24 @@ for finding in report.findings:
 
 qai ships an MCP (Model Context Protocol) server, so any MCP-speaking agent — Claude
 Code, Claude Desktop, Cursor, a custom agent harness — can call it as a tool instead of
-you running the CLI by hand. Seven tools are exposed (see
+you running the CLI by hand. Nine tools are exposed (see
 [docs/USAGE.md](docs/USAGE.md#mcp-server-for-ai-agents) for full signatures):
 
 | Tool | What it does |
 |---|---|
-| `qa_scan` | Fuzz one page's forms, return a JSON `RunReport`. Optional `plugins=[...]` runs check plugins (e.g. `security_headers`) alongside the fuzz oracle. |
+| `qa_scan` | Fuzz one page's forms, return a JSON `RunReport`. Optional `plugins=[...]` runs check plugins (e.g. `security_headers`, `idor`, `auth_bypass`) alongside the fuzz oracle; `login_macro=` replays a saved login first. |
 | `qa_scan_html` | Same as `qa_scan`, plus writes a self-contained dark-themed HTML report. |
 | `qa_crawl` | BFS-discover same-origin pages from a root URL, fuzz every form found. |
-| `qa_pipeline_start` | Open a resumable, externally-driven pipeline (recon + check stages) — one live browser session across calls. |
+| `qa_api_scan` | Parse an OpenAPI/GraphQL spec and fuzz every operation straight over HTTP — same `RunReport` shape, no DOM needed. |
+| `qa_login_record` | Record a login once (fills the form, reads back cookies/bearer token) and return a reusable `LoginMacro`. |
+| `qa_pipeline_start` | Open a resumable, externally-driven pipeline (recon + check stages) — one live browser session across calls. `own_target=True` is required for an `ACTIVE` check stage (e.g. `idor`) to actually run. |
 | `qa_pipeline_step` | Run or skip exactly one stage; optionally inject an `AgentDirective` first. |
 | `qa_pipeline_report` | Project the session's current findings as a `RunReport`, without tearing it down. |
 | `qa_pipeline_abort` | Free the live browser and delete the session. |
+
+Active checks (`idor`, `auth_bypass`) fire real extra requests and are gated by the
+same `own_target`/safe-mode rule as fuzzing itself — omit `own_target=True` and they're
+always `SKIPPED`, never run, against a target you haven't confirmed you own.
 
 ### 1. Install
 

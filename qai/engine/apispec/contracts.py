@@ -11,11 +11,11 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from qai.engine.contracts import (
+    _FROZEN,
     FieldConstraints,
     FieldKind,
     FormModel,
     HttpMethod,
-    _FROZEN,
 )
 
 

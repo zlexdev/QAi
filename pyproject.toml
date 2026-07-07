@@ -53,6 +53,9 @@ select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
 "qai/engine/modeler.py" = ["E501"]
 # Ambiguous-unicode fuzz payload is deliberate — it's the case under test, not a typo.
 "qai/engine/fuzzer/strategies.py" = ["RUF001"]
+# FastAPI's Body(...)/Form(...)/Cookie(...) default-arg pattern is the framework's own
+# idiom, not a real "function call in a default" hazard.
+"qai/demo_target/app.py" = ["B008"]
 
 [tool.mypy]
 python_version = "3.12"

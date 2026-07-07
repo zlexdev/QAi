@@ -137,10 +137,9 @@ async def run_api_scan(
             await login_pool.close()
         resolved_cookies = [*auth.cookies, *(cookies or [])]
 
-    if spec.kind is ApiSpecKind.OPENAPI:
-        operations = parse_openapi(spec.raw)
-    else:
-        operations = parse_graphql(spec.raw)
+    operations = (
+        parse_openapi(spec.raw) if spec.kind is ApiSpecKind.OPENAPI else parse_graphql(spec.raw)
+    )
 
     correlator: CodeCorrelator | None = None
     if repo_path:

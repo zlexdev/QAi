@@ -7,7 +7,7 @@ import pytest
 
 from qai.engine.auth.recorder import record_login
 from qai.engine.auth.replayer import replay_login
-from qai.engine.capture import BrowserPool, CaptureSession
+from qai.engine.capture import BrowserPool
 from qai.engine.errors import LoginFailedError
 from qai.engine.runner import run_scan
 
@@ -19,7 +19,7 @@ async def test_record_login_succeeds_and_cookie_authenticates_protected_route(
 ) -> None:
     pool = await BrowserPool.create(headless=True)
     try:
-        macro, auth_result = await record_login(
+        _macro, auth_result = await record_login(
             pool, f"{demo_server}/login", "admin", "secret"
         )
     finally:

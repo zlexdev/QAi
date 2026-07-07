@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from qai.engine.contracts import CookieSpec, _FROZEN
+from qai.engine.contracts import _FROZEN, CookieSpec
 
 
 class LoginMacro(BaseModel):

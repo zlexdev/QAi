@@ -29,8 +29,15 @@ One `Check` class, two callers:
 Neither caller knows about the other. This package never imports `qai.engine.pipeline` or
 `qai.engine.runner` — it's a leaf package, same shape as `qai/engine/fuzzer/`.
 
-## Scope (pilot)
+## Active checks + safe_mode gate
 
-Only `security_headers` (a PASSIVE check) ships in this slice. Active checks (IDOR,
-auth-bypass replay) are deferred — they'll need a `ReplayClient` handle and
-`safe_mode`/`own_target` gating not built yet.
+`idor` and `auth_bypass` (both `CheckKind.ACTIVE`) fire extra requests via
+`replay.py`'s `ReplayClient` (wraps the SAME `CaptureSession` recon already opened —
+no second browser). `PluginRunner`/`CheckStage` both gate any `ACTIVE` check on
+`ctx.safe_mode: bool` (fail-safe default `True`, see `contracts.py`): when `True`, the
+check is `SKIPPED` and `run()` is never called; `replay` is only constructed when a
+real `ACTIVE` run happens. A check author never has to self-gate — write an `ACTIVE`
+check exactly like a `PASSIVE` one.
+
+Differential-response comparison shared by both active checks lives in
+`checks/differential.py` (`similar_shape()`), not duplicated per-check.

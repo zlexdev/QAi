@@ -20,6 +20,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from qai.engine.analyzer import Analyzer
+from qai.engine.auth.contracts import LoginMacro
+from qai.engine.auth.replayer import replay_login
 from qai.engine.capture import BrowserPool, CaptureSession
 from qai.engine.contracts import (
     CookieSpec,
@@ -69,6 +71,24 @@ def _flatten_fields(page_model: PageModel) -> list[FieldModel]:
     return [f for form in page_model.forms for f in form.fields]
 
 
+async def _resolve_cookies(
+    headless: bool,
+    cookies: list[CookieSpec] | None,
+    login_macro: LoginMacro | None,
+) -> list[CookieSpec] | None:
+    """``login_macro=None`` (the default) returns ``cookies`` unchanged — byte-for-byte
+    backward compatible. Otherwise replays the macro and merges its cookies (macro's
+    first) with any explicitly-passed ``cookies=``."""
+    if login_macro is None:
+        return cookies
+    pool = await BrowserPool.create(headless=headless)
+    try:
+        auth = await replay_login(pool, login_macro)
+    finally:
+        await pool.close()
+    return [*auth.cookies, *(cookies or [])]
+
+
 async def run_scan(
     url: str,
     repo_path: str | None = None,
@@ -80,6 +100,7 @@ async def run_scan(
     direct_mode: bool = False,
     cookies: list[CookieSpec] | None = None,
     plugins: list[str] | None = None,
+    login_macro: LoginMacro | None = None,
 ) -> RunReport:
     """Execute the full Phase 0-3 pipeline against ``url`` and return a RunReport.
 
@@ -106,6 +127,7 @@ async def run_scan(
     url = validate_url(url)
     run_id = uuid.uuid4().hex[:12]
     started_at = datetime.now(UTC)
+    cookies = await _resolve_cookies(headless, cookies, login_macro)
 
     correlator: CodeCorrelator | None = None
     if repo_path:
@@ -389,6 +411,7 @@ async def run_crawl(
     safe_mode: bool = False,
     direct_mode: bool = False,
     cookies: list[CookieSpec] | None = None,
+    login_macro: LoginMacro | None = None,
 ) -> CrawlReport:
     """Phase 4: discover same-origin states reachable from ``url`` (BFS, budgeted),
     then run the Phase 0-3 fuzz pipeline against every discovered page that has a form.
@@ -403,6 +426,7 @@ async def run_crawl(
     run_id = uuid.uuid4().hex[:12]
     started_at = datetime.now(UTC)
     active_budget = budget or CrawlBudget()
+    cookies = await _resolve_cookies(headless, cookies, login_macro)
 
     correlator: CodeCorrelator | None = None
     if repo_path:

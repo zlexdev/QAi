@@ -17,7 +17,7 @@ cls StepInfo(BaseModel)
 
 cls PipelineState(BaseModel)
 
-cls PentestContext: target_url: str, page: PageModel | None, effects: list[EffectBundle], core_findings: list[Finding], plugin_findings: list[PluginFinding], directives: list[AgentDirective], cookies: list[CookieSpec] | None, repo_path: str | None
+cls PentestContext: target_url: str, page: PageModel | None, effects: list[EffectBundle], core_findings: list[Finding], plugin_findings: list[PluginFinding], directives: list[AgentDirective], cookies: list[CookieSpec] | None, repo_path: str | None, safe_mode: bool
 
 cls Stage(ABC)
 
@@ -82,6 +82,6 @@ cls ReconStage(Stage)
 
 cls CheckStage(Stage)
   # Generic adapter — works for ANY registered Check, not just security_headers.
-  __init__(check: Check) -> None
+  __init__(check: Check, session: CaptureSession) -> None
 
 ```

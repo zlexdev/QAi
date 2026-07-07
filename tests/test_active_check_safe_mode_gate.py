@@ -112,5 +112,5 @@ async def test_check_stage_passive_check_unaffected_by_safe_mode() -> None:
     for safe_mode in (True, False):
         check.called = False
         stage = CheckStage(check, CaptureSession())
-        ctx = await stage(_pentest_ctx(safe_mode))
+        await stage(_pentest_ctx(safe_mode))
         assert check.called is True

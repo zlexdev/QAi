@@ -44,7 +44,9 @@ class IdorCheck(Check):
     kind = CheckKind.ACTIVE
     timeout_s = 15.0
 
-    async def run(self, ctx: CheckContext, replay: ReplayClient | None) -> list[PluginFinding]:
+    async def run(
+        self, ctx: CheckContext, replay: ReplayClient | None = None
+    ) -> list[PluginFinding]:
         if replay is None:
             return []
         findings: list[PluginFinding] = []

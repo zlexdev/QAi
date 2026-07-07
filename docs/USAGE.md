@@ -254,17 +254,36 @@ uv run qai-mcp
 ```
 
 Point your MCP client (Claude Code, another agent harness) at `qai-mcp` over stdio.
-Seven tools:
+Nine tools:
 
-- **`qa_scan(url, repo_path=None, headless=True, parallel=1, har_dir=None, own_target=False, direct_mode=False, cookies=None, plugins=None)`**
-  → JSON `RunReport`. `plugins` runs registered check plugins (e.g. `["security_headers"]`)
-  as an extra pass alongside the fuzz oracle — see [docs/PLUGINS.md](PLUGINS.md); `None`
-  (default) runs none, identical behaviour to before the param existed except the
-  always-present `plugin_findings: []` field.
-- **`qa_scan_html(url, repo_path=None, out_path="qai-report.html", headless=True, parallel=1, own_target=False)`**
+- **`qa_scan(url, repo_path=None, headless=True, parallel=1, har_dir=None, own_target=False, direct_mode=False, cookies=None, plugins=None, login_macro=None)`**
+  → JSON `RunReport`. `plugins` runs registered check plugins (e.g.
+  `["security_headers", "idor", "auth_bypass"]`) as an extra pass alongside the fuzz
+  oracle — see [docs/PLUGINS.md](PLUGINS.md); `None` (default) runs none, identical
+  behaviour to before the param existed except the always-present
+  `plugin_findings: []` field. `idor`/`auth_bypass` are `ACTIVE` checks — they only
+  actually run when `own_target=True` (or the target is localhost); otherwise they're
+  `SKIPPED`. `login_macro` (a saved `LoginMacro` dict from `qa_login_record`), when
+  given, replays the login first and merges its cookies with `cookies=` (macro's
+  cookies first) — `None` (default) is a no-op.
+- **`qa_scan_html(url, repo_path=None, out_path="qai-report.html", headless=True, parallel=1, own_target=False, login_macro=None)`**
   → JSON summary + a written HTML report path.
-- **`qa_crawl(url, repo_path=None, headless=True, max_depth=2, max_actions=50, wall_clock_seconds=180, allow_destructive=None, parallel=1, own_target=False, direct_mode=False, cookies=None)`**
+- **`qa_crawl(url, repo_path=None, headless=True, max_depth=2, max_actions=50, wall_clock_seconds=180, allow_destructive=None, parallel=1, own_target=False, direct_mode=False, cookies=None, login_macro=None)`**
   → JSON `CrawlReport` (BFS-discovered pages, each fuzzed; see Crawl mode above).
+- **`qa_api_scan(spec, base_url, spec_kind="openapi", repo_path=None, headless=True, own_target=False, cookies=None, login_macro=None, plugins=None)`**
+  → JSON `RunReport`. `spec` is the spec TEXT itself (OpenAPI JSON/YAML or GraphQL
+  introspection JSON/SDL), not a file path; `spec_kind` is `"openapi"` (default) or
+  `"graphql"`. Parses the spec into operations, converts each to the same
+  `FormModel`/`FieldModel` vocabulary the DOM fuzzer uses, and fires fuzz cases
+  straight over HTTP (no browser DOM needed) — same `own_target`/safe-mode rule as
+  `qa_scan`.
+- **`qa_login_record(login_url, username, password, success_indicator=None, own_target=False, headless=True)`**
+  → `{"macro": {...}, "auth_result": {...}}`. Fills the login form once (via the
+  existing form-fill machinery, no new automation), reads back the resulting
+  cookies/bearer token, and returns a `LoginMacro` the caller can save and pass as
+  `login_macro=` to any of the tools above. `success_indicator` is a URL substring or
+  CSS selector proving the login worked; omit it and qai falls back to "the URL
+  changed away from `login_url`."
 
 ### Driven pipeline (resumable, externally-steered)
 
@@ -273,9 +292,12 @@ agent drives it one stage at a time, inspecting each step's output before decidi
 whether to inject context, skip, or configure the next step. No internal LLM — the
 calling agent supplies the judgment, qai supplies the mechanism.
 
-- **`qa_pipeline_start(url, repo_path=None, headless=True, own_target=False, cookies=None, plugins=None)`**
+- **`qa_pipeline_start(url, repo_path=None, headless=True, own_target=False, cookies=None, plugins=None, login_macro=None)`**
   → JSON `PipelineState` (`session_id`, `steps` all pending, `cursor=0`). `plugins`
   defaults to `["security_headers"]`; pass `[]` for a recon-only, single-stage pipeline.
+  `own_target` now has a real effect (it used to be a documented no-op): it's required
+  for an `ACTIVE` check stage (e.g. `idor`) to actually run — without it, that stage's
+  outcome is `SKIPPED`, same rule as `qa_scan`'s.
 - **`qa_pipeline_step(session_id, inject=None, skip=False, config=None)`**
   → runs (or skips) exactly one stage, advancing the cursor by one. `inject` is an
   `AgentDirective` dict (`notes`/`focus_selectors`/`focus_params`/`hints`) appended to

@@ -11,6 +11,11 @@ from urllib.parse import urlparse
 
 from rich.console import Console
 
+from qai.engine.api_runner import run_api_scan
+from qai.engine.apispec.contracts import ApiSpecKind, ApiSpecSource
+from qai.engine.auth.contracts import LoginMacro
+from qai.engine.auth.recorder import record_login
+from qai.engine.capture import BrowserPool
 from qai.engine.contracts import CookieSpec, CrawlBudget, ScanReport
 from qai.engine.errors import InvalidCookieSpecError, QaiError
 from qai.engine.logging import configure_logging
@@ -117,7 +122,57 @@ def build_parser() -> argparse.ArgumentParser:
         "can be supplied alongside the main target's, e.g. "
         "--cookie .example.com:session=abc --cookie sso.example.com:token=xyz",
     )
+    parser.add_argument(
+        "--spec", default=None, help="Path to an OpenAPI/GraphQL spec file — switches to "
+        "API-scan mode (positional url becomes the API's base_url)"
+    )
+    parser.add_argument(
+        "--spec-kind", default="openapi", choices=["openapi", "graphql"],
+        help="Kind of --spec file (default: openapi)"
+    )
+    parser.add_argument("--login-url", default=None, help="Login page URL — record a login")
+    parser.add_argument("--username", default=None, help="Username for --login-url")
+    parser.add_argument("--password", default=None, help="Password for --login-url")
+    parser.add_argument(
+        "--login-success-indicator", default=None,
+        help="URL substring or CSS selector proving --login-url succeeded"
+    )
+    parser.add_argument(
+        "--login-macro", default=None, metavar="PATH",
+        help="Load a previously-recorded LoginMacro JSON file and replay it before the scan/crawl"
+    )
     return parser
+
+
+async def _load_login_macro(path: str) -> LoginMacro:
+    return LoginMacro.model_validate_json(Path(path).read_text())
+
+
+async def _record_and_print(args: argparse.Namespace, console: Console) -> int:
+    if not (args.own_target or _is_local_target(args.login_url)):
+        console.print(
+            "[bold red]qai error:[/bold red] --i-own-this-target required to record a "
+            "login against a non-local target"
+        )
+        return 1
+    pool = await BrowserPool.create(headless=not args.headed)
+    try:
+        macro, auth_result = await record_login(
+            pool,
+            args.login_url,
+            args.username,
+            args.password,
+            success_indicator=args.login_success_indicator,
+        )
+    finally:
+        await pool.close()
+    console.print_json(
+        data={
+            "macro": macro.model_dump(mode="json"),
+            "auth_result": auth_result.model_dump(mode="json"),
+        }
+    )
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -131,6 +186,15 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(level=10 if args.verbose else 20)
     console = Console(legacy_windows=False)
 
+    # --login-url alone (no --spec) is "record only, print macro JSON, exit" mode —
+    # the required positional `url` is simply unused in this mode.
+    if args.login_url:
+        try:
+            return asyncio.run(_record_and_print(args, console))
+        except QaiError as exc:
+            console.print(f"[bold red]qai error:[/bold red] {exc}")
+            return 1
+
     safe_mode = not (args.own_target or _is_local_target(args.url))
     if safe_mode:
         console.print(
@@ -141,7 +205,24 @@ def main(argv: list[str] | None = None) -> int:
     report: ScanReport
     try:
         cookies = [_parse_cookie_arg(raw) for raw in args.cookies]
-        if args.crawl:
+        login_macro = asyncio.run(_load_login_macro(args.login_macro)) if args.login_macro else None
+
+        if args.spec:
+            spec_source = ApiSpecSource(
+                kind=ApiSpecKind(args.spec_kind), raw=Path(args.spec).read_text()
+            )
+            report = asyncio.run(
+                run_api_scan(
+                    spec_source,
+                    args.url,
+                    args.repo,
+                    headless=not args.headed,
+                    safe_mode=safe_mode,
+                    cookies=cookies,
+                    login_macro=login_macro,
+                )
+            )
+        elif args.crawl:
             budget = CrawlBudget(
                 max_depth=args.max_depth,
                 max_actions=args.max_actions,
@@ -159,6 +240,7 @@ def main(argv: list[str] | None = None) -> int:
                     safe_mode=safe_mode,
                     direct_mode=args.direct_mode,
                     cookies=cookies,
+                    login_macro=login_macro,
                 )
             )
         else:
@@ -172,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
                     safe_mode=safe_mode,
                     direct_mode=args.direct_mode,
                     cookies=cookies,
+                    login_macro=login_macro,
                 )
             )
     except QaiError as exc:

@@ -19,9 +19,19 @@ from urllib.parse import urlparse
 from mcp.server.fastmcp import FastMCP
 from pydantic import TypeAdapter, ValidationError
 
+from qai.engine.api_runner import run_api_scan
+from qai.engine.apispec.contracts import ApiSpecKind, ApiSpecSource
+from qai.engine.auth.contracts import LoginMacro
+from qai.engine.auth.recorder import record_login
+from qai.engine.auth.replayer import replay_login
 from qai.engine.capture import BrowserPool, CaptureSession
 from qai.engine.contracts import CookieSpec, CrawlBudget, RunReport
-from qai.engine.errors import InvalidCookieSpecError, InvalidStepConfigError, QaiError
+from qai.engine.errors import (
+    InvalidCookieSpecError,
+    InvalidSpecError,
+    InvalidStepConfigError,
+    QaiError,
+)
 from qai.engine.logging import configure_logging
 from qai.engine.pipeline.contracts import (
     AgentDirective,
@@ -109,6 +119,15 @@ def _parse_cookies(raw: list[dict[str, str]] | None) -> list[CookieSpec] | None:
         raise InvalidCookieSpecError(str(raw), str(exc)) from exc
 
 
+def _parse_login_macro(raw: dict[str, object] | None) -> LoginMacro | None:
+    if raw is None:
+        return None
+    try:
+        return LoginMacro(**raw)
+    except ValidationError as exc:
+        raise InvalidSpecError(str(raw), str(exc)) from exc
+
+
 @mcp.tool()
 async def qa_scan(
     url: str,
@@ -120,6 +139,7 @@ async def qa_scan(
     direct_mode: bool = False,
     cookies: list[dict[str, str]] | None = None,
     plugins: list[str] | None = None,
+    login_macro: dict[str, object] | None = None,
 ) -> str:
     """Run the full qai pipeline against ``url`` and return a JSON RunReport.
 
@@ -146,6 +166,10 @@ async def qa_scan(
             ``["security_headers"]``). ``None`` (default) runs none — identical
             behaviour to before this param existed, except the always-present
             ``plugin_findings: []`` field.
+        login_macro: a saved ``LoginMacro`` dict (see ``qa_login_record``). When
+            given, replays the login before the scan and merges its cookies with
+            ``cookies=`` (macro's cookies first). ``None`` (default) is a no-op —
+            identical behaviour to before this param existed.
     """
     safe_mode = _resolve_safe_mode(url, own_target)
     try:
@@ -159,6 +183,7 @@ async def qa_scan(
             direct_mode=direct_mode,
             cookies=_parse_cookies(cookies),
             plugins=plugins,
+            login_macro=_parse_login_macro(login_macro),
         )
     except QaiError as exc:
         return json.dumps({"error": str(exc), "error_type": type(exc).__name__})
@@ -173,17 +198,24 @@ async def qa_scan_html(
     headless: bool = True,
     parallel: int = 1,
     own_target: bool = False,
+    login_macro: dict[str, object] | None = None,
 ) -> str:
     """Run a scan and write a self-contained dark-themed HTML report to ``out_path``.
 
     Use this when a human will read the result — the HTML report is the polished
     surface (clickable file:line, severity-colored rows). Returns the JSON summary
-    plus the written path. See ``qa_scan`` for the ``own_target``/safe-mode rule.
+    plus the written path. See ``qa_scan`` for the ``own_target``/safe-mode rule and
+    the ``login_macro`` shape.
     """
     safe_mode = _resolve_safe_mode(url, own_target)
     try:
         report = await run_scan(
-            url, repo_path, headless=headless, max_parallel=parallel, safe_mode=safe_mode
+            url,
+            repo_path,
+            headless=headless,
+            max_parallel=parallel,
+            safe_mode=safe_mode,
+            login_macro=_parse_login_macro(login_macro),
         )
     except QaiError as exc:
         return json.dumps({"error": str(exc), "error_type": type(exc).__name__})
@@ -213,6 +245,7 @@ async def qa_crawl(
     own_target: bool = False,
     direct_mode: bool = False,
     cookies: list[dict[str, str]] | None = None,
+    login_macro: dict[str, object] | None = None,
 ) -> str:
     """Discover same-origin pages (BFS, budgeted) from ``url`` and fuzz every form found.
 
@@ -221,8 +254,8 @@ async def qa_crawl(
     selector is in ``allow_destructive``. This is a heuristic, not a security guarantee —
     review the returned ``skipped_destructive`` list yourself.
 
-    See ``qa_scan`` for the ``own_target``/safe-mode rule and the ``cookies`` shape —
-    both apply identically here, per discovered page.
+    See ``qa_scan`` for the ``own_target``/safe-mode rule and the ``cookies``/
+    ``login_macro`` shape — both apply identically here, per discovered page.
     """
     safe_mode = _resolve_safe_mode(url, own_target)
     budget = CrawlBudget(
@@ -239,10 +272,93 @@ async def qa_crawl(
             safe_mode=safe_mode,
             direct_mode=direct_mode,
             cookies=_parse_cookies(cookies),
+            login_macro=_parse_login_macro(login_macro),
         )
     except QaiError as exc:
         return json.dumps({"error": str(exc), "error_type": type(exc).__name__})
     return report.model_dump_json()
+
+
+@mcp.tool()
+async def qa_api_scan(
+    spec: str,
+    base_url: str,
+    spec_kind: str = "openapi",
+    repo_path: str | None = None,
+    headless: bool = True,
+    own_target: bool = False,
+    cookies: list[dict[str, str]] | None = None,
+    login_macro: dict[str, object] | None = None,
+    plugins: list[str] | None = None,
+) -> str:
+    """Parse ``spec`` (OpenAPI JSON/YAML, or GraphQL introspection JSON/SDL) and fuzz
+    every operation straight over HTTP. Returns a JSON RunReport, same shape as
+    ``qa_scan``'s.
+
+    Args:
+        spec: the spec text itself (not a file path).
+        spec_kind: ``"openapi"`` (default) or ``"graphql"``.
+        own_target: same fail-safe rule as ``qa_scan`` — required to actually fire
+            fuzz requests against a non-local ``base_url``.
+    """
+    safe_mode = _resolve_safe_mode(base_url, own_target)
+    try:
+        spec_source = ApiSpecSource(kind=ApiSpecKind(spec_kind), raw=spec)
+        report = await run_api_scan(
+            spec_source,
+            base_url,
+            repo_path=repo_path,
+            headless=headless,
+            safe_mode=safe_mode,
+            cookies=_parse_cookies(cookies),
+            login_macro=_parse_login_macro(login_macro),
+            plugins=plugins,
+        )
+    except QaiError as exc:
+        return json.dumps({"error": str(exc), "error_type": type(exc).__name__})
+    return report.model_dump_json()
+
+
+@mcp.tool()
+async def qa_login_record(
+    login_url: str,
+    username: str,
+    password: str,
+    success_indicator: str | None = None,
+    own_target: bool = False,
+    headless: bool = True,
+) -> str:
+    """Record a login (fills the login form once, reads back cookies/bearer token) and
+    return a reusable ``LoginMacro`` the caller can save and pass as ``login_macro=``
+    to ``qa_scan``/``qa_crawl``/``qa_api_scan``/``qa_pipeline_start``.
+
+    Args:
+        own_target: must be True for a non-local ``login_url`` — same fail-safe rule
+            as every other tool's own_target.
+    """
+    if _resolve_safe_mode(login_url, own_target):
+        return json.dumps(
+            {
+                "error": "own_target=True required to record a login against a non-local target",
+                "error_type": "InvalidTargetError",
+            }
+        )
+    try:
+        pool = await BrowserPool.create(headless=headless)
+        try:
+            macro, auth_result = await record_login(
+                pool, login_url, username, password, success_indicator=success_indicator
+            )
+        finally:
+            await pool.close()
+    except QaiError as exc:
+        return json.dumps({"error": str(exc), "error_type": type(exc).__name__})
+    return json.dumps(
+        {
+            "macro": json.loads(macro.model_dump_json()),
+            "auth_result": json.loads(auth_result.model_dump_json()),
+        }
+    )
 
 
 def _build_stages(session: CaptureSession, plugin_names: list[str]) -> list[Stage]:
@@ -287,6 +403,7 @@ async def qa_pipeline_start(
     own_target: bool = False,
     cookies: list[dict[str, str]] | None = None,
     plugins: list[str] | None = None,
+    login_macro: dict[str, object] | None = None,
 ) -> str:
     """Start a resumable, externally-driven pentest pipeline against ``url``.
 
@@ -296,16 +413,28 @@ async def qa_pipeline_start(
     configure the next step.
 
     Args:
-        own_target: reserved for a future active-check gating rule (deferred — this
-            pilot ships only a passive check, so it has no effect yet).
+        own_target: must be True to let an ACTIVE check stage (e.g. ``idor``,
+            ``auth_bypass``) actually run — same fail-safe rule as ``qa_scan``'s. Without
+            it, an ACTIVE check stage is SKIPPED, never PASSIVE ones.
         plugins: check stages to append after the fixed ``recon`` stage. ``None``
-            defaults to ``["security_headers"]`` (the pilot's only check); pass ``[]``
+            defaults to ``["security_headers"]`` (PASSIVE, always safe); pass ``[]``
             for a recon-only, single-stage pipeline.
+        login_macro: a saved ``LoginMacro`` dict (see ``qa_login_record``). When given,
+            replays the login before the session opens and merges its cookies with
+            ``cookies=`` (macro's cookies first).
     """
-    del own_target  # reserved, see docstring
     try:
         target = validate_url(url)
+        safe_mode = _resolve_safe_mode(url, own_target)
+        macro = _parse_login_macro(login_macro)
         cookie_specs = _parse_cookies(cookies)
+        if macro is not None:
+            login_pool = await BrowserPool.create(headless=headless)
+            try:
+                auth = await replay_login(login_pool, macro)
+            finally:
+                await login_pool.close()
+            cookie_specs = [*auth.cookies, *(cookie_specs or [])]
         plugin_names = _DEFAULT_PIPELINE_PLUGINS if plugins is None else plugins
         iter_checks(plugin_names)  # fail fast on a typo before opening a browser
 
@@ -322,6 +451,7 @@ async def qa_pipeline_start(
             directives=[],
             cookies=cookie_specs,
             repo_path=repo_path,
+            safe_mode=safe_mode,
         )
         pipeline = Pipeline("", stages, ctx)
         session_id = await _SESSION_STORE.create(ctx, pipeline.steps)

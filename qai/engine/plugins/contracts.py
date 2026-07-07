@@ -78,7 +78,7 @@ class Check(ABC):
 
     @abstractmethod
     async def run(
-        self, ctx: CheckContext, replay: "ReplayClient | None" = None
+        self, ctx: CheckContext, replay: ReplayClient | None = None
     ) -> list[PluginFinding]:
         """``replay`` is None for every PASSIVE check. ACTIVE checks receive a real
         ``ReplayClient`` bound to the session's recon, once past the safe_mode gate."""

@@ -3,9 +3,11 @@
 
 ## Submodules
 
+- [`apispec/`](apispec\_MODULE_AUTO.md) — apispec — OpenAPI/GraphQL spec parsing, converted to the existing FormModel/ (4 py, 4 cls, 14 fn)
+- [`auth/`](auth\_MODULE_AUTO.md) — auth — one-time login recording (record_login) and deterministic replay (3 py, 2 cls, 6 fn)
 - [`fuzzer/`](fuzzer\_MODULE_AUTO.md) (2 py, 10 cls, 2 fn)
 - [`pipeline/`](pipeline\_MODULE_AUTO.md) (4 py, 12 cls, 2 fn)
-- [`plugins/`](plugins\_MODULE_AUTO.md) (4 py, 8 cls, 3 fn)
+- [`plugins/`](plugins\_MODULE_AUTO.md) (8 py, 11 cls, 9 fn)
 
 ## analyzer.py
 ```
@@ -19,6 +21,21 @@ cls Analyzer
 
 _preview(value: str) -> str
   # Truncate a fuzz value for human-readable detail text (overflow cases are 100k chars).
+
+```
+
+## api_runner.py
+```
+# run_api_scan — spec-driven API scanning (OpenAPI/GraphQL). Parses the spec into
+
+
+cls _ApiRequestExecutor
+  __init__(session: CaptureSession, op: ApiOperation, base_url: str) -> None
+  async run(plan: FuzzPlan) -> EffectBundle
+
+_flatten_fields(operations: list[ApiOperation) -> list[FieldModel]
+
+async run_api_scan(spec: ApiSpecSource, base_url: str, repo_path: str? = None, headless: bool = True, safe_mode: bool = True, cookies: list[CookieSpec]? = None, login_macro: LoginMacro? = None, plugins: list[str]? = None) -> RunReport
 
 ```
 
@@ -46,6 +63,7 @@ cls CaptureSession
   tab_id() -> str
   request() -> APIRequestContext
   async open(url: str) -> None
+  async cookies() -> list[CookieSpec]
   async capture(action_id: str, action: Callable[[], Awaitable[None) -> EffectBundle
     # Run ``action`` and return everything observed while it executed.
 
@@ -238,6 +256,14 @@ cls InvalidStepConfigError(QaiError)
   # A ``config`` payload's ``stage`` discriminator doesn't match the pipeline's current stage.
   __init__(expected_stage: str, got_stage: str) -> None
 
+cls InvalidSpecError(QaiError)
+  # A ``--spec`` file failed to parse as OpenAPI or GraphQL.
+  __init__(source: str, reason: str) -> None
+
+cls LoginFailedError(QaiError)
+  # record_login/replay_login's success_indicator never matched.
+  __init__(login_url: str, reason: str) -> None
+
 ```
 
 ## executor.py
@@ -365,15 +391,19 @@ validate_url(url: str) -> str
 
 _flatten_fields(page_model: PageModel) -> list[FieldModel]
 
+async _resolve_cookies(headless: bool, cookies: list[CookieSpec]?, login_macro: LoginMacro?) -> list[CookieSpec] | None
+
 async run_scan(url: str, repo_path: str? = None) -> RunReport
 
-async _recon(url: str, run_id: str, pool: BrowserPool, stability_cache: dict[str, float, cookies: list[CookieSpec]? = None) -> tuple[PageModel, EffectBundle]
+async _recon(session: CaptureSession, url: str) -> tuple[PageModel, EffectBundle]
 
-async _run_plugins(plugins: list[str]?, page_model: PageModel, recon_effect: EffectBundle, repo_path: str?, cookies: list[CookieSpec]?) -> list[PluginFinding]
+async _run_plugins(plugins: list[str]?, page_model: PageModel, recon_effect: EffectBundle, repo_path: str?, cookies: list[CookieSpec]?, session: CaptureSession, safe_mode: bool = True) -> list[PluginFinding]
 
 async _fuzz_page_model() -> tuple[list[Finding], int, int, list[str]]
 
 async _run_worker(url: str, bucket: list[WorkItem, tab_index: int, run_id: str, headless: bool, har_dir: str?, correlator: CodeCorrelator?, har_paths: list[str, direct_mode: bool, templates: dict[str, RequestTemplate?, pool: BrowserPool, stability_cache: dict[str, float, cookies: list[CookieSpec]? = None) -> list[Finding]
+
+async _fuzz_form(session: CaptureSession, executor: FormExecutor, analyzer: Analyzer, templates: dict[str, RequestTemplate?, correlator: CodeCorrelator?, url: str, form: FormModel, plan: FuzzPlan, direct_mode: bool) -> list[Finding]
 
 _learn_from_effect(form: FormModel, effect: EffectBundle) -> RequestTemplate | None
 
