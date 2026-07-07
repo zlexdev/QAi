@@ -4,10 +4,10 @@ behavior when the new flags are omitted."""
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 from pathlib import Path
-
-import pytest
 
 from qai.cli import build_parser, main
 
@@ -41,24 +41,29 @@ def test_parser_accepts_spec_and_login_flags() -> None:
     assert ns3.login_macro == "macro.json"
 
 
-def test_login_url_record_mode_prints_macro_json(
-    demo_server: str, capsys: pytest.CaptureFixture[str]
-) -> None:
-    exit_code = main(
-        [
-            "unused",
-            "--login-url",
-            f"{demo_server}/login",
-            "--username",
-            "admin",
-            "--password",
-            "secret",
-            "--i-own-this-target",
-        ]
-    )
+def test_login_url_record_mode_prints_macro_json(demo_server: str) -> None:
+    # contextlib.redirect_stdout (not pytest's capsys) — capsys also swaps sys.stderr,
+    # and main() -> configure_logging() binds structlog's global PrintLoggerFactory to
+    # whatever sys.stderr is AT THAT MOMENT (cache_logger_on_first_use=True); capsys
+    # closes its captured buffer at teardown, which would leave structlog holding a
+    # closed file handle for every later test in the session ("I/O operation on closed
+    # file"). redirect_stdout leaves sys.stderr untouched, so this can't happen.
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        exit_code = main(
+            [
+                "unused",
+                "--login-url",
+                f"{demo_server}/login",
+                "--username",
+                "admin",
+                "--password",
+                "secret",
+                "--i-own-this-target",
+            ]
+        )
     assert exit_code == 0
-    out = capsys.readouterr().out
-    payload = json.loads(out)
+    payload = json.loads(buffer.getvalue())
     assert payload["auth_result"]["authenticated"] is True
 
 
