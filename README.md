@@ -78,9 +78,18 @@ for finding in report.findings:
 
 qai ships an MCP (Model Context Protocol) server, so any MCP-speaking agent — Claude
 Code, Claude Desktop, Cursor, a custom agent harness — can call it as a tool instead of
-you running the CLI by hand. Three tools are exposed: `qa_scan`, `qa_scan_html`,
-`qa_crawl` (see [docs/USAGE.md](docs/USAGE.md#mcp-server-for-ai-agents) for full
-signatures, including `cookies=[...]` for authenticated targets).
+you running the CLI by hand. Seven tools are exposed (see
+[docs/USAGE.md](docs/USAGE.md#mcp-server-for-ai-agents) for full signatures):
+
+| Tool | What it does |
+|---|---|
+| `qa_scan` | Fuzz one page's forms, return a JSON `RunReport`. Optional `plugins=[...]` runs check plugins (e.g. `security_headers`) alongside the fuzz oracle. |
+| `qa_scan_html` | Same as `qa_scan`, plus writes a self-contained dark-themed HTML report. |
+| `qa_crawl` | BFS-discover same-origin pages from a root URL, fuzz every form found. |
+| `qa_pipeline_start` | Open a resumable, externally-driven pipeline (recon + check stages) — one live browser session across calls. |
+| `qa_pipeline_step` | Run or skip exactly one stage; optionally inject an `AgentDirective` first. |
+| `qa_pipeline_report` | Project the session's current findings as a `RunReport`, without tearing it down. |
+| `qa_pipeline_abort` | Free the live browser and delete the session. |
 
 ### 1. Install
 
@@ -144,6 +153,119 @@ CLI — an agent can call `qa_scan`/`qa_crawl` against any URL and safely get a 
 page model back; it must explicitly pass `own_target=True` to actually fuzz a non-local
 host. Don't grant `own_target=True` by default in an agent's system prompt/tool config
 unless every target it might be pointed at is one you own — see [Safety](#safety) below.
+
+### 4. Examples
+
+These are real tool calls against the bundled demo target
+(`uv run uvicorn qai.demo_target.app:app --port 8000`) — the JSON is abbreviated for
+readability but the shapes and values are unmodified from an actual run.
+
+**Plain fuzz scan** — no plugins, matches CLI-only behaviour byte-for-byte except the
+always-present `plugin_findings: []`:
+
+```jsonc
+// call: qa_scan(url="http://127.0.0.1:8000", repo_path="qai/demo_target")
+{
+  "run_id": "5c77053f29de",
+  "forms_scanned": 1,
+  "cases_executed": 71,
+  "findings": [
+    {
+      "severity": "high",
+      "kind": "server_error",
+      "detail": "POST http://127.0.0.1:8000/signup -> 500 on intent=overflow value='AAA...'",
+      "source_location": { "file": "app.py", "line": 40, "symbol": "signup" }
+    },
+    { "severity": "medium", "kind": "console_error", "detail": "Failed to load resource: ... 500 ..." }
+  ],
+  "plugin_findings": []
+}
+```
+
+**Scan + check plugin** — same call, `plugins=["security_headers"]` added, runs the
+fuzz oracle and the header check in one pass:
+
+```jsonc
+// call: qa_scan(url="http://127.0.0.1:8000", repo_path="qai/demo_target",
+//               plugins=["security_headers"])
+{
+  "run_id": "e635378e46d6",
+  "forms_scanned": 1,
+  "cases_executed": 71,
+  "findings": [ /* same 500-on-overflow finding as above */ ],
+  "plugin_findings": [
+    { "plugin": "security_headers", "category": "missing_csp", "severity": "low",
+      "title": "Missing content-security-policy response header" },
+    { "plugin": "security_headers", "category": "missing_x_frame_options", "severity": "low",
+      "title": "Missing x-frame-options response header" },
+    { "plugin": "security_headers", "category": "missing_hsts", "severity": "low",
+      "title": "Missing strict-transport-security response header" },
+    { "plugin": "security_headers", "category": "missing_x_content_type_options", "severity": "low",
+      "title": "Missing x-content-type-options response header" }
+  ]
+}
+```
+
+**Authenticated scan** — cookies injected before any navigation:
+
+```jsonc
+// call: qa_scan(url="https://app.internal/dashboard", repo_path="/repos/app",
+//               cookies=[{"name": "session", "value": "abc123", "domain": "app.internal"}],
+//               own_target=true)
+```
+
+**HTML report for a human reader**:
+
+```jsonc
+// call: qa_scan_html(url="http://127.0.0.1:8000", repo_path="qai/demo_target",
+//                     out_path="report.html")
+{ "run_id": "...", "ok": false, "findings_count": 2, "html_report": "C:\\...\\report.html" }
+```
+
+**Crawl mode** — BFS-discover pages, fuzz every form found:
+
+```jsonc
+// call: qa_crawl(url="http://127.0.0.1:8000", repo_path="qai/demo_target",
+//                 max_depth=2, max_actions=50)
+{ "run_id": "...", "states_visited": 3, "pages": [ /* one RunReport per page with a form */ ] }
+```
+
+**Driven pipeline** — step-by-step, inspecting output and injecting context between
+stages (this is the sequence a Claude Code session actually ran):
+
+```jsonc
+// 1) qa_pipeline_start(url="http://127.0.0.1:8000", repo_path="qai/demo_target")
+{ "session_id": "a4b10b47...", "cursor": 0, "steps": [
+  { "name": "recon", "status": "pending" }, { "name": "security_headers", "status": "pending" }
+]}
+
+// 2) qa_pipeline_step(session_id="a4b10b47...")            -> runs "recon"
+{ "cursor": 1, "steps": [{ "name": "recon", "status": "done" }, { "name": "security_headers", "status": "pending" }] }
+
+// 3) qa_pipeline_step(session_id="a4b10b47...", inject={"notes": "focus on headers"})
+{ "cursor": 2, "steps": [{ "status": "done" }, { "status": "done" }],
+  "last_step_output": [ /* the same 4 security_headers findings as above */ ] }
+
+// 4) qa_pipeline_report(session_id="a4b10b47...")          -> RunReport-shaped projection
+{ "plugin_findings": [ /* 4 findings */ ] }
+
+// 5) qa_pipeline_abort(session_id="a4b10b47...")           -> frees the browser
+{ "ok": true }
+```
+
+**Recon-only pipeline** (skip the check stage entirely):
+
+```jsonc
+// call: qa_pipeline_start(url="http://127.0.0.1:8000", plugins=[])
+// -> steps: [{"name": "recon", "status": "pending"}]   (no security_headers stage)
+```
+
+**Skipping a stage mid-pipeline** instead of running it:
+
+```jsonc
+// call: qa_pipeline_step(session_id="a4b10b47...", skip=true)
+// -> cursor advances, that stage's status becomes "skipped", no side effects run
+```
 
 ## How it works
 
