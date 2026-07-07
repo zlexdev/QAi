@@ -7,7 +7,11 @@ The engine never imports this module — the boundary invariant holds both ways.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -39,10 +43,10 @@ from qai.engine.runner import run_crawl, run_scan, validate_url
 _STEP_CONFIG_ADAPTER: TypeAdapter[StepConfig] = TypeAdapter(StepConfig)
 
 configure_logging()
-mcp = FastMCP("qai")
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _DEFAULT_PIPELINE_PLUGINS = ["security_headers"]
+_REAP_INTERVAL_SECONDS = 60.0
 
 # Durable session state (ctx/steps/cursor) — survives an MCP server restart.
 _SESSION_STORE = SqliteSessionStore(Path("qai-reports") / ".pipeline_sessions.sqlite3")
@@ -50,6 +54,43 @@ _SESSION_STORE = SqliteSessionStore(Path("qai-reports") / ".pipeline_sessions.sq
 # session_id. Lost on process restart — see 05-risks.md R-3; a step call after a
 # restart lazily rebuilds this from the durable ctx/steps.
 _LIVE_PIPELINES: dict[str, tuple[Pipeline, BrowserPool, CaptureSession]] = {}
+# One lock per live session_id — serializes step/report/abort against each other so two
+# concurrent MCP calls on the same session can't race the cursor/SQLite save. Entries are
+# evicted on abort so this dict tracks only currently-live sessions, not every one ever seen.
+_SESSION_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _lock_for(session_id: str) -> asyncio.Lock:
+    lock = _SESSION_LOCKS.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _SESSION_LOCKS[session_id] = lock
+    return lock
+
+
+async def _reap_idle_pools_loop() -> None:
+    """Background loop (R-6 mitigation) — evicts BrowserPools idle past IDLE_TTL_SECONDS
+    so an agent that never calls qa_pipeline_abort doesn't leak a live browser process
+    forever. The SQLite row survives; a later qa_pipeline_step still resumes (R-3)."""
+    while True:
+        await asyncio.sleep(_REAP_INTERVAL_SECONDS)
+        reaped = await _SESSION_STORE.reap_idle_pools()
+        for session_id in reaped:
+            _LIVE_PIPELINES.pop(session_id, None)
+
+
+@asynccontextmanager
+async def _lifespan(_server: FastMCP) -> AsyncIterator[None]:
+    task = asyncio.create_task(_reap_idle_pools_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+mcp = FastMCP("qai", lifespan=_lifespan)
 
 
 def _resolve_safe_mode(url: str, own_target: bool) -> bool:
@@ -313,12 +354,13 @@ async def qa_pipeline_step(
             eagerly so a caller gets fast feedback on a malformed payload.
     """
     try:
-        pipeline = await _get_pipeline(session_id)
-        directive = AgentDirective(**inject) if inject is not None else None
-        if config is not None:
-            _validate_step_config(pipeline, config)
-        output = await pipeline.step(inject=directive, skip=skip)
-        await _SESSION_STORE.save(session_id, pipeline.ctx, pipeline.steps, pipeline.cursor)
+        async with _lock_for(session_id):
+            pipeline = await _get_pipeline(session_id)
+            directive = AgentDirective(**inject) if inject is not None else None
+            if config is not None:
+                _validate_step_config(pipeline, config)
+            output = await pipeline.step(inject=directive, skip=skip)
+            await _SESSION_STORE.save(session_id, pipeline.ctx, pipeline.steps, pipeline.cursor)
     except QaiError as exc:
         return json.dumps({"error": str(exc), "error_type": type(exc).__name__})
     return pipeline.to_state(last_step_output=output).model_dump_json()
@@ -339,8 +381,9 @@ async def qa_pipeline_report(session_id: str) -> str:
     PentestContext. Does not tear down the session — call ``qa_pipeline_abort``
     separately once done."""
     try:
-        pipeline = await _get_pipeline(session_id)
-        ctx = pipeline.ctx
+        async with _lock_for(session_id):
+            pipeline = await _get_pipeline(session_id)
+            ctx = pipeline.ctx
         report = RunReport(
             run_id=session_id,
             target_url=ctx.target_url,
@@ -359,16 +402,18 @@ async def qa_pipeline_report(session_id: str) -> str:
 async def qa_pipeline_abort(session_id: str) -> str:
     """Close the session's live BrowserPool (if any) and delete its SQLite row."""
     try:
-        await _SESSION_STORE.load(session_id)  # raises UnknownSessionError if gone
-        live = _LIVE_PIPELINES.pop(session_id, None)
-        pool: BrowserPool | None
-        if live is not None:
-            _, pool, _session = live
-        else:
-            pool = _SESSION_STORE.evict_pool(session_id)
-        if pool is not None:
-            await pool.close()
-        await _SESSION_STORE.delete(session_id)
+        async with _lock_for(session_id):
+            await _SESSION_STORE.load(session_id)  # raises UnknownSessionError if gone
+            live = _LIVE_PIPELINES.pop(session_id, None)
+            pool: BrowserPool | None
+            if live is not None:
+                _, pool, _session = live
+            else:
+                pool = _SESSION_STORE.evict_pool(session_id)
+            if pool is not None:
+                await pool.close()
+            await _SESSION_STORE.delete(session_id)
+        _SESSION_LOCKS.pop(session_id, None)
     except QaiError as exc:
         return json.dumps({"error": str(exc), "error_type": type(exc).__name__})
     return json.dumps({"ok": True})

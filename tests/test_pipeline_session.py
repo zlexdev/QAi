@@ -78,3 +78,40 @@ async def test_directory_is_created_if_missing(tmp_path: Path) -> None:
     assert not nested.exists()
     SqliteSessionStore(nested / "sessions.sqlite3")
     assert nested.exists()
+
+
+async def test_reap_idle_pools_closes_stale_pool_but_keeps_sqlite_row(tmp_path: Path) -> None:
+    store = SqliteSessionStore(tmp_path / "sessions.sqlite3")
+    session_id = await store.create(_ctx(), _steps())
+
+    closed = False
+
+    class _FakePool:
+        async def close(self) -> None:
+            nonlocal closed
+            closed = True
+
+    store.set_pool(session_id, _FakePool())  # type: ignore[arg-type]
+    reaped = await store.reap_idle_pools(ttl_seconds=-1)  # everything is "stale"
+
+    assert reaped == [session_id]
+    assert closed is True
+    assert store.get_pool(session_id) is None
+    # The durable row survives reaping — only the live browser is reclaimed (R-6).
+    ctx, _, _ = await store.load(session_id)
+    assert ctx.target_url == "https://example.test"
+
+
+async def test_reap_idle_pools_ignores_fresh_pools(tmp_path: Path) -> None:
+    store = SqliteSessionStore(tmp_path / "sessions.sqlite3")
+    session_id = await store.create(_ctx(), _steps())
+
+    class _FakePool:
+        async def close(self) -> None:
+            raise AssertionError("a fresh pool must not be reaped")
+
+    store.set_pool(session_id, _FakePool())  # type: ignore[arg-type]
+    reaped = await store.reap_idle_pools(ttl_seconds=600)
+
+    assert reaped == []
+    assert store.get_pool(session_id) is not None

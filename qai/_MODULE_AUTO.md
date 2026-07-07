@@ -30,7 +30,14 @@ main(argv: list[str]? = None) -> int
 
 _LOCAL_HOSTS = {'localhost', '127.0.0.1', '::1'}
 _DEFAULT_PIPELINE_PLUGINS = ['security_headers']
+_REAP_INTERVAL_SECONDS = 60.0
 _SESSION_STORE = …
+
+_lock_for(session_id: str) -> asyncio.Lock
+
+async _reap_idle_pools_loop() -> None
+
+async _lifespan(_server: FastMCP) -> AsyncIterator[None]
 
 _resolve_safe_mode(url: str, own_target: bool) -> bool
 
