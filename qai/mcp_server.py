@@ -246,7 +246,7 @@ async def qa_crawl(
 
 
 def _build_stages(session: CaptureSession, plugin_names: list[str]) -> list[Stage]:
-    return [ReconStage(session), *(CheckStage(c) for c in iter_checks(plugin_names))]
+    return [ReconStage(session), *(CheckStage(c, session) for c in iter_checks(plugin_names))]
 
 
 def _plugin_names_from_steps(steps: list[StepInfo]) -> list[str]:

@@ -118,9 +118,21 @@ async def run_scan(
     pool = await BrowserPool.create(headless=headless)
     stability_cache: dict[str, float] = {}
     try:
-        page_model, recon_effect = await _recon(url, run_id, pool, stability_cache, cookies)
-        forms_scanned = len(page_model.forms)
-        plugin_findings = await _run_plugins(plugins, page_model, recon_effect, repo_path, cookies)
+        async with CaptureSession(
+            run_id=run_id,
+            tab_id="recon",
+            pool=pool,
+            stability_cache=stability_cache,
+            cookies=cookies,
+        ) as recon_session:
+            page_model, recon_effect = await _recon(recon_session, url)
+            forms_scanned = len(page_model.forms)
+            # Runs BEFORE the recon session closes: an ACTIVE check's ReplayClient must
+            # be bound to the SAME session/cookies recon just captured (Decision A) —
+            # no second browser/session spin-up.
+            plugin_findings = await _run_plugins(
+                plugins, page_model, recon_effect, repo_path, cookies, recon_session, safe_mode
+            )
 
         if safe_mode or not page_model.forms:
             return RunReport(
@@ -178,14 +190,9 @@ async def run_scan(
     return report
 
 
-async def _recon(
-    url: str,
-    run_id: str,
-    pool: BrowserPool,
-    stability_cache: dict[str, float],
-    cookies: list[CookieSpec] | None = None,
-) -> tuple[PageModel, EffectBundle]:
-    """One-off session that models the page — never fills or submits anything.
+async def _recon(session: CaptureSession, url: str) -> tuple[PageModel, EffectBundle]:
+    """Models the page on the given (already-open) session — never fills or submits
+    anything.
 
     Also captures one EffectBundle (the page-load response) so a plugin phase has real
     response headers to inspect. Headers don't vary per fuzz payload, so the root page
@@ -193,16 +200,9 @@ async def _recon(
     EffectBundles through the whole fuzz-worker fan-out.
     """
     modeler = PageModeler()
-    async with CaptureSession(
-        run_id=run_id,
-        tab_id="recon",
-        pool=pool,
-        stability_cache=stability_cache,
-        cookies=cookies,
-    ) as session:
-        effect = await session.capture("recon", lambda: session.open(url, capture_load=True))
-        page_model = await modeler.model(session.page)
-        return page_model, effect
+    effect = await session.capture("recon", lambda: session.open(url, capture_load=True))
+    page_model = await modeler.model(session.page)
+    return page_model, effect
 
 
 async def _run_plugins(
@@ -211,15 +211,22 @@ async def _run_plugins(
     recon_effect: EffectBundle,
     repo_path: str | None,
     cookies: list[CookieSpec] | None,
+    session: CaptureSession,
+    safe_mode: bool = True,
 ) -> list[PluginFinding]:
-    """Runs the named check plugins against the recon page/response. ``plugins=None``
+    """Runs the named check plugins against the recon page/response, using the SAME
+    (still-open) recon session for any ACTIVE check's ReplayClient. ``plugins=None``
     (the default) is a no-op — this is what makes the param backward-compatible."""
     if not plugins:
         return []
     check_ctx = CheckContext(
-        page=page_model, effects=[recon_effect], cookies=cookies, repo_path=repo_path
+        page=page_model,
+        effects=[recon_effect],
+        cookies=cookies,
+        repo_path=repo_path,
+        safe_mode=safe_mode,
     )
-    outcomes = await PluginRunner(iter_checks(plugins)).run(check_ctx)
+    outcomes = await PluginRunner(iter_checks(plugins), session).run(check_ctx)
     return [f for outcome in outcomes for f in outcome.findings]
 
 

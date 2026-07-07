@@ -6,7 +6,8 @@ from qai.engine.capture import CaptureSession
 from qai.engine.errors import ReconNotRunError
 from qai.engine.modeler import PageModeler
 from qai.engine.pipeline.contracts import PentestContext, Stage
-from qai.engine.plugins.contracts import Check, CheckContext, CheckStatus
+from qai.engine.plugins.contracts import Check, CheckContext, CheckKind, CheckStatus
+from qai.engine.plugins.replay import ReplayClient
 from qai.engine.plugins.runner import run_with_containment
 
 
@@ -31,8 +32,9 @@ class CheckStage(Stage):
 
     skippable = True
 
-    def __init__(self, check: Check) -> None:
+    def __init__(self, check: Check, session: CaptureSession) -> None:
         self._check = check
+        self._session = session
         self.name = check.name
         self.timeout_s = check.timeout_s
 
@@ -45,9 +47,14 @@ class CheckStage(Stage):
             cookies=ctx.cookies,
             repo_path=ctx.repo_path,
             directives=ctx.directives,
+            safe_mode=ctx.safe_mode,
         )
+        if self._check.kind is CheckKind.ACTIVE and ctx.safe_mode:
+            # SKIPPED — self._check.run is never called, same guard as PluginRunner's.
+            return ctx
+        replay = ReplayClient(self._session) if self._check.kind is CheckKind.ACTIVE else None
         findings, status, _error = await run_with_containment(
-            self._check.run(check_ctx, None), self.timeout_s
+            self._check.run(check_ctx, replay), self.timeout_s
         )
         if status is CheckStatus.OK:
             ctx.plugin_findings.extend(findings or [])

@@ -11,8 +11,10 @@ import asyncio
 import time
 from collections.abc import Awaitable
 
+from qai.engine.capture import CaptureSession
 from qai.engine.logging import get_logger
-from qai.engine.plugins.contracts import Check, CheckContext, CheckOutcome, CheckStatus
+from qai.engine.plugins.contracts import Check, CheckContext, CheckKind, CheckOutcome, CheckStatus
+from qai.engine.plugins.replay import ReplayClient
 
 _log = get_logger("plugins.runner")
 
@@ -32,14 +34,24 @@ async def run_with_containment[T](
 
 
 class PluginRunner:
-    def __init__(self, checks: list[Check]) -> None:
+    def __init__(self, checks: list[Check], session: CaptureSession) -> None:
         self._checks = checks
+        self._session = session
 
     async def run(self, ctx: CheckContext) -> list[CheckOutcome]:
         async def _one(check: Check) -> CheckOutcome:
+            if check.kind is CheckKind.ACTIVE and ctx.safe_mode:
+                return CheckOutcome(
+                    plugin=check.name,
+                    status=CheckStatus.SKIPPED,
+                    findings=[],
+                    duration_ms=0.0,
+                    error="active check skipped: safe_mode",
+                )
             start = time.monotonic()
+            replay = ReplayClient(self._session) if check.kind is CheckKind.ACTIVE else None
             findings, status, error = await run_with_containment(
-                check.run(ctx, None), check.timeout_s
+                check.run(ctx, replay), check.timeout_s
             )
             return CheckOutcome(
                 plugin=check.name,

@@ -9,10 +9,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from qai.engine.contracts import CookieSpec, EffectBundle, PageModel, PluginFinding
+
+if TYPE_CHECKING:
+    from qai.engine.plugins.replay import ReplayClient
 
 _FROZEN = ConfigDict(frozen=True, extra="forbid")
 
@@ -26,6 +30,7 @@ class CheckStatus(StrEnum):
     OK = "ok"
     TIMEOUT = "timeout"
     ERROR = "error"
+    SKIPPED = "skipped"
 
 
 class AgentDirective(BaseModel):
@@ -47,10 +52,14 @@ class CheckContext(BaseModel):
     cookies: list[CookieSpec] | None = None
     repo_path: str | None = None
     directives: list[AgentDirective] = Field(default_factory=list)
-    # NOTE: no `replay` field here — a live ReplayClient handle (future, active checks) is
-    # NOT serializable and is passed as a separate function argument to Check.run, never
-    # through this frozen DTO. This keeps CheckContext JSON-round-trippable for the
-    # SQLite-persisted pipeline path.
+    # Fail-safe default: an ACTIVE check only ever runs when a real _resolve_safe_mode()
+    # result threaded it through as False (see Decision D4/R-4) — never flip this
+    # literal, always pass the resolved value.
+    safe_mode: bool = True
+    # NOTE: no `replay` field here — a live ReplayClient handle is NOT serializable and
+    # is passed as a separate function argument to Check.run, never through this frozen
+    # DTO. This keeps CheckContext JSON-round-trippable for the SQLite-persisted
+    # pipeline path.
 
 
 class CheckOutcome(BaseModel):
@@ -68,7 +77,9 @@ class Check(ABC):
     timeout_s: float = 10.0
 
     @abstractmethod
-    async def run(self, ctx: CheckContext, replay: object | None = None) -> list[PluginFinding]:
-        """``replay`` is None for every PASSIVE check (the pilot's only kind). Reserved for
-        a future ``ReplayClient`` type once ACTIVE checks ship."""
+    async def run(
+        self, ctx: CheckContext, replay: "ReplayClient | None" = None
+    ) -> list[PluginFinding]:
+        """``replay`` is None for every PASSIVE check. ACTIVE checks receive a real
+        ``ReplayClient`` bound to the session's recon, once past the safe_mode gate."""
         ...

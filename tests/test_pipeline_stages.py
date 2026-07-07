@@ -63,7 +63,7 @@ async def test_recon_stage_sets_page_and_appends_effect(demo_server: str) -> Non
 
 async def test_check_stage_appends_findings_on_ok() -> None:
     ctx = _ctx(page=PageModel(url="https://example.test"))
-    stage = CheckStage(_SecondFakeCheck())
+    stage = CheckStage(_SecondFakeCheck(), CaptureSession())
     ctx = await stage(ctx)
     assert len(ctx.plugin_findings) == 1
     assert ctx.plugin_findings[0].plugin == "fake_check"
@@ -71,6 +71,6 @@ async def test_check_stage_appends_findings_on_ok() -> None:
 
 async def test_check_stage_swallows_error_and_leaves_findings_untouched() -> None:
     ctx = _ctx(page=PageModel(url="https://example.test"))
-    stage = CheckStage(_FailingCheck())
+    stage = CheckStage(_FailingCheck(), CaptureSession())
     ctx = await stage(ctx)
     assert ctx.plugin_findings == []

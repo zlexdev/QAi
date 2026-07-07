@@ -8,6 +8,7 @@ import inspect
 
 import pytest
 
+from qai.engine.capture import CaptureSession
 from qai.engine.contracts import PageModel, PluginFinding
 from qai.engine.plugins.contracts import Check, CheckContext, CheckKind, CheckStatus
 from qai.engine.plugins.runner import PluginRunner, run_with_containment
@@ -67,7 +68,9 @@ async def test_plugin_runner_contains_mixed_outcomes() -> None:
     _SlowCheck.name = "slow"
     _RaisingCheck.name = "raising"
     _OkCheck.name = "ok"
-    outcomes = await PluginRunner([_SlowCheck(), _RaisingCheck(), _OkCheck()]).run(_ctx())
+    outcomes = await PluginRunner(
+        [_SlowCheck(), _RaisingCheck(), _OkCheck()], CaptureSession()
+    ).run(_ctx())
     by_plugin = {o.plugin: o for o in outcomes}
     assert by_plugin["slow"].status is CheckStatus.TIMEOUT
     assert by_plugin["raising"].status is CheckStatus.ERROR

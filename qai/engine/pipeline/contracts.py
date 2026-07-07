@@ -94,6 +94,7 @@ class PentestContext:
     directives: list[AgentDirective]
     cookies: list[CookieSpec] | None
     repo_path: str | None
+    safe_mode: bool = True
 
 
 class Stage(ABC):
