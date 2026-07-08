@@ -60,6 +60,7 @@ cls BrowserPool: playwright: Playwright, browser: Browser
 cls CaptureSession
   __init__() -> None
   page() -> Page
+  async screenshot(path: str) -> bool
   tab_id() -> str
   request() -> APIRequestContext
   async open(url: str) -> None
@@ -395,7 +396,7 @@ async _resolve_cookies(headless: bool, cookies: list[CookieSpec]?, login_macro: 
 
 async run_scan(url: str, repo_path: str? = None) -> RunReport
 
-async _recon(session: CaptureSession, url: str) -> tuple[PageModel, EffectBundle]
+async _recon(session: CaptureSession, url: str) -> tuple[PageModel, EffectBundle, str | None]
 
 async _run_plugins(plugins: list[str]?, page_model: PageModel, recon_effect: EffectBundle, repo_path: str?, cookies: list[CookieSpec]?, session: CaptureSession, safe_mode: bool = True) -> list[PluginFinding]
 

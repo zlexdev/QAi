@@ -101,6 +101,8 @@ async def run_scan(
     cookies: list[CookieSpec] | None = None,
     plugins: list[str] | None = None,
     login_macro: LoginMacro | None = None,
+    screenshot: bool = False,
+    screenshot_dir: str | None = None,
 ) -> RunReport:
     """Execute the full Phase 0-3 pipeline against ``url`` and return a RunReport.
 
@@ -123,11 +125,22 @@ async def run_scan(
             recon page/response (e.g. ``["security_headers"]``). ``None`` (default)
             runs none — byte-for-byte identical output to before this param existed,
             except the always-present ``plugin_findings: []`` field.
+        screenshot: if True, saves a PNG of the recon page and returns its path as
+            ``RunReport.screenshot_path`` — a calling agent can ``Read`` that path
+            directly. Best-effort: a capture failure never fails the scan, it just
+            leaves ``screenshot_path`` as ``None``.
+        screenshot_dir: directory the screenshot is saved under (default
+            ``qai-reports/screenshots``), created if missing.
     """
     url = validate_url(url)
     run_id = uuid.uuid4().hex[:12]
     started_at = datetime.now(UTC)
     cookies = await _resolve_cookies(headless, cookies, login_macro)
+    screenshot_path = None
+    if screenshot:
+        shot_dir = Path(screenshot_dir or "qai-reports/screenshots")
+        shot_dir.mkdir(parents=True, exist_ok=True)
+        screenshot_path = str(shot_dir / f"{run_id}.png")
 
     correlator: CodeCorrelator | None = None
     if repo_path:
@@ -147,7 +160,9 @@ async def run_scan(
             stability_cache=stability_cache,
             cookies=cookies,
         ) as recon_session:
-            page_model, recon_effect = await _recon(recon_session, url)
+            page_model, recon_effect, saved_screenshot = await _recon(
+                recon_session, url, screenshot_path=screenshot_path
+            )
             forms_scanned = len(page_model.forms)
             # Runs BEFORE the recon session closes: an ACTIVE check's ReplayClient must
             # be bound to the SAME session/cookies recon just captured (Decision A) —
@@ -169,6 +184,7 @@ async def run_scan(
                 fields_examined=_flatten_fields(page_model),
                 findings=[],
                 plugin_findings=plugin_findings,
+                screenshot_path=saved_screenshot,
             )
 
         findings, cases_executed, workers, har_paths = await _fuzz_page_model(
@@ -200,6 +216,7 @@ async def run_scan(
         fields_examined=_flatten_fields(page_model),
         findings=findings,
         plugin_findings=plugin_findings,
+        screenshot_path=saved_screenshot,
     )
     _log.info(
         "scan_complete",
@@ -212,7 +229,9 @@ async def run_scan(
     return report
 
 
-async def _recon(session: CaptureSession, url: str) -> tuple[PageModel, EffectBundle]:
+async def _recon(
+    session: CaptureSession, url: str, *, screenshot_path: str | None = None
+) -> tuple[PageModel, EffectBundle, str | None]:
     """Models the page on the given (already-open) session — never fills or submits
     anything.
 
@@ -220,11 +239,18 @@ async def _recon(session: CaptureSession, url: str) -> tuple[PageModel, EffectBu
     response headers to inspect. Headers don't vary per fuzz payload, so the root page
     load's response is sufficient for a header check — narrower than threading
     EffectBundles through the whole fuzz-worker fan-out.
+
+    ``screenshot_path``, if given, saves a PNG of the settled page there (best-effort
+    — see CaptureSession.screenshot) and the SAME path is returned as the 3rd tuple
+    element on success, or None if capture wasn't requested or failed.
     """
     modeler = PageModeler()
     effect = await session.capture("recon", lambda: session.open(url, capture_load=True))
+    saved_screenshot = None
+    if screenshot_path is not None and await session.screenshot(screenshot_path):
+        saved_screenshot = screenshot_path
     page_model = await modeler.model(session.page)
-    return page_model, effect
+    return page_model, effect, saved_screenshot
 
 
 async def _run_plugins(

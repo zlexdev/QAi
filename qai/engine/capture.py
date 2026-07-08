@@ -145,6 +145,17 @@ class CaptureSession:
             raise CaptureError(url="-", cause="session not opened")
         return self._page
 
+    async def screenshot(self, path: str) -> bool:
+        """Saves a PNG of the current page to ``path``. Never raises — a screenshot
+        is a nice-to-have, not a reason to fail the whole scan; returns False and
+        logs a warning on failure."""
+        try:
+            await self.page.screenshot(path=path)
+        except Exception as exc:  # best-effort capture — logged, never raised
+            _log.warning("screenshot_failed", path=path, error=str(exc))
+            return False
+        return True
+
     @property
     def tab_id(self) -> str:
         return self._tab_id

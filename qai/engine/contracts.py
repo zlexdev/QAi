@@ -308,6 +308,7 @@ class RunReport(BaseModel):
     fields_examined: list[FieldModel] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
     plugin_findings: list[PluginFinding] = Field(default_factory=list)
+    screenshot_path: str | None = None
 
     @property
     def ok(self) -> bool:

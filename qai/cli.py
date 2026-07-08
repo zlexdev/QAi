@@ -141,6 +141,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--login-macro", default=None, metavar="PATH",
         help="Load a previously-recorded LoginMacro JSON file and replay it before the scan/crawl"
     )
+    parser.add_argument(
+        "--screenshot", action="store_true",
+        help="Save a PNG of the recon page; path is printed and included in --json output"
+    )
+    parser.add_argument(
+        "--screenshot-dir", default=None, metavar="DIR",
+        help="Directory the screenshot is saved under (default: qai-reports/screenshots)"
+    )
     return parser
 
 
@@ -255,6 +263,8 @@ def main(argv: list[str] | None = None) -> int:
                     direct_mode=args.direct_mode,
                     cookies=cookies,
                     login_macro=login_macro,
+                    screenshot=args.screenshot,
+                    screenshot_dir=args.screenshot_dir,
                 )
             )
     except QaiError as exc:
@@ -271,6 +281,10 @@ def main(argv: list[str] | None = None) -> int:
         exhausted = getattr(report, "budget_exhausted_by", None)
         if exhausted:
             console.print(f"[dim]Crawl stopped early: budget exhausted ({exhausted})[/dim]")
+
+    screenshot_path = getattr(report, "screenshot_path", None)
+    if screenshot_path:
+        console.print(f"[dim]Screenshot saved: {screenshot_path}[/dim]")
 
     reporter = Reporter()
     reporter.print_table(report, console)

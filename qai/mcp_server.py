@@ -140,6 +140,8 @@ async def qa_scan(
     cookies: list[dict[str, str]] | None = None,
     plugins: list[str] | None = None,
     login_macro: dict[str, object] | None = None,
+    screenshot: bool = False,
+    screenshot_dir: str | None = None,
 ) -> str:
     """Run the full qai pipeline against ``url`` and return a JSON RunReport.
 
@@ -170,6 +172,11 @@ async def qa_scan(
             given, replays the login before the scan and merges its cookies with
             ``cookies=`` (macro's cookies first). ``None`` (default) is a no-op —
             identical behaviour to before this param existed.
+        screenshot: if True, saves a PNG of the recon page and returns its path as
+            ``screenshot_path`` in the report — read that path directly to see the
+            page qai scanned. ``False`` (default) is a no-op.
+        screenshot_dir: directory the screenshot is saved under (default
+            ``qai-reports/screenshots``).
     """
     safe_mode = _resolve_safe_mode(url, own_target)
     try:
@@ -184,6 +191,8 @@ async def qa_scan(
             cookies=_parse_cookies(cookies),
             plugins=plugins,
             login_macro=_parse_login_macro(login_macro),
+            screenshot=screenshot,
+            screenshot_dir=screenshot_dir,
         )
     except QaiError as exc:
         return json.dumps({"error": str(exc), "error_type": type(exc).__name__})
@@ -199,13 +208,15 @@ async def qa_scan_html(
     parallel: int = 1,
     own_target: bool = False,
     login_macro: dict[str, object] | None = None,
+    screenshot: bool = False,
+    screenshot_dir: str | None = None,
 ) -> str:
     """Run a scan and write a self-contained dark-themed HTML report to ``out_path``.
 
     Use this when a human will read the result — the HTML report is the polished
     surface (clickable file:line, severity-colored rows). Returns the JSON summary
-    plus the written path. See ``qa_scan`` for the ``own_target``/safe-mode rule and
-    the ``login_macro`` shape.
+    plus the written path. See ``qa_scan`` for the ``own_target``/safe-mode rule,
+    the ``login_macro`` shape, and the ``screenshot``/``screenshot_dir`` params.
     """
     safe_mode = _resolve_safe_mode(url, own_target)
     try:
@@ -216,6 +227,8 @@ async def qa_scan_html(
             max_parallel=parallel,
             safe_mode=safe_mode,
             login_macro=_parse_login_macro(login_macro),
+            screenshot=screenshot,
+            screenshot_dir=screenshot_dir,
         )
     except QaiError as exc:
         return json.dumps({"error": str(exc), "error_type": type(exc).__name__})
@@ -228,6 +241,7 @@ async def qa_scan_html(
             "safe_mode": report.safe_mode,
             "findings_count": len(report.findings),
             "html_report": str(path.resolve()),
+            "screenshot_path": report.screenshot_path,
         }
     )
 

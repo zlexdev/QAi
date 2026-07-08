@@ -49,9 +49,9 @@ _parse_cookies(raw: list[dict[str, str]]?) -> list[CookieSpec] | None
 
 _parse_login_macro(raw: dict[str, object]?) -> LoginMacro | None
 
-async qa_scan(url: str, repo_path: str? = None, headless: bool = True, parallel: int = 1, har_dir: str? = None, own_target: bool = False, direct_mode: bool = False, cookies: list[dict[str, str]]? = None, plugins: list[str]? = None, login_macro: dict[str, object]? = None) -> str
+async qa_scan(url: str, repo_path: str? = None, headless: bool = True, parallel: int = 1, har_dir: str? = None, own_target: bool = False, direct_mode: bool = False, cookies: list[dict[str, str]]? = None, plugins: list[str]? = None, login_macro: dict[str, object]? = None, screenshot: bool = False, screenshot_dir: str? = None) -> str
 
-async qa_scan_html(url: str, repo_path: str? = None, out_path: str = 'qai-report.html', headless: bool = True, parallel: int = 1, own_target: bool = False, login_macro: dict[str, object]? = None) -> str
+async qa_scan_html(url: str, repo_path: str? = None, out_path: str = 'qai-report.html', headless: bool = True, parallel: int = 1, own_target: bool = False, login_macro: dict[str, object]? = None, screenshot: bool = False, screenshot_dir: str? = None) -> str
 
 async qa_crawl(url: str, repo_path: str? = None, headless: bool = True, max_depth: int = 2, max_actions: int = 50, wall_clock_seconds: int = 180, allow_destructive: list[str]? = None, parallel: int = 1, own_target: bool = False, direct_mode: bool = False, cookies: list[dict[str, str]]? = None, login_macro: dict[str, object]? = None) -> str
 
