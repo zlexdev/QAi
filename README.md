@@ -1,21 +1,47 @@
 # QAi
 
-Autonomous web-form fuzzer. Give it a `URL` + a repo, it finds a bug in a form
-(5xx / console-error under fuzzing) and points at the exact `file:line` in your
-backend where it lives — no manual test writing, no AI/paid APIs.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](pyproject.toml)
+[![MCP](https://img.shields.io/badge/MCP-server-6e56cf)](#deploy--install-as-a-plugin-for-ai-agents-mcp)
+[![Playwright](https://img.shields.io/badge/browser-Playwright-2ead33)](https://playwright.dev)
 
-Full usage guide: **[docs/USAGE.md](docs/USAGE.md)**. Architecture background:
-[PLAN.md](PLAN.md) / [mini-plat.md](mini-plat.md). Writing a check plugin:
-[docs/PLUGINS.md](docs/PLUGINS.md).
+**Autonomous web-app security scanner that points at the exact line of code where
+the bug lives.** Give it a `URL` (+ optionally a repo, an OpenAPI/GraphQL spec, or
+a login), it fuzzes forms and API operations, replays IDOR/auth-bypass probes,
+and correlates every finding straight back to `file:line` — self-hosted, no
+manual test writing, **no AI/paid APIs required to run a scan**.
 
 ```
-URL → page model (fields+types) → fuzz matrix per form → capture effects
-(network+console+navigation) → oracle (5xx/console-error) → correlate to file:line → report
+URL → page model / API spec → fuzz matrix + active checks → capture effects
+(network+console+DOM) → oracle (5xx/console-error/IDOR/auth-bypass) → correlate
+to file:line → report (JSON / HTML / MCP)
 ```
 
-MVP scope: one form, one target framework (FastAPI). No state-graph crawling yet —
-see [PLAN.md](PLAN.md) for the phase breakdown and [mini-plat.md](mini-plat.md) for the
-full architecture this project instantiates.
+## Why qai
+
+| | qai | Burp Suite / ZAP | AI pentest SaaS |
+|---|---|---|---|
+| Self-hosted, no account | ✅ | ✅ (ZAP) | ❌ usually cloud-only |
+| No AI / paid API calls to run | ✅ | ✅ | ❌ |
+| Bug → exact `file:line` in your repo | ✅ | ❌ | rarely |
+| Native MCP server (agent-drivable) | ✅ | ❌ | varies |
+| OpenAPI/GraphQL spec-driven scanning | ✅ | ✅ | ✅ |
+| Active checks (IDOR, auth-bypass) | ✅ | ✅ | ✅ |
+| Free & open source | ✅ | ZAP: ✅ / Burp: ❌ | ❌ |
+
+The file:line correlation and MCP-native design are the two things a general
+scanner doesn't do: an agent (Claude Code, Cursor, …) can run a scan *and* open
+the exact file the bug lives in, in the same session.
+
+## Contents
+
+- [Install](#install)
+- [Quick start](#try-it-against-the-bundled-demo-target)
+- [CLI features](#stability-parallel-tabs-direct-request-fuzzing-har)
+- [Use as a library](#use-as-a-library)
+- [MCP server for AI agents](#deploy--install-as-a-plugin-for-ai-agents-mcp)
+- [How it works](#how-it-works)
+- [Safety](#safety)
 
 ## Install
 
@@ -210,6 +236,55 @@ fuzz oracle and the header check in one pass:
       "title": "Missing x-content-type-options response header" }
   ]
 }
+```
+
+**Screenshot the page qai scanned** — real output from an actual run:
+
+```jsonc
+// call: qa_scan(url="http://127.0.0.1:8000", repo_path="qai/demo_target", screenshot=true)
+{
+  "run_id": "849c2cf13a41",
+  "forms_scanned": 1,
+  "findings": [ /* 2 findings, same overflow bug */ ],
+  "screenshot_path": "qai-reports/screenshots/849c2cf13a41.png"
+}
+// -> Read that path directly (Claude Code, or any agent that can open images)
+```
+
+**Active checks** — IDOR + auth-bypass replay, gated by `own_target` (never fire
+without it, see [Safety](#safety)):
+
+```jsonc
+// call: qa_scan(url="http://127.0.0.1:8000", repo_path="qai/demo_target",
+//               plugins=["idor", "auth_bypass"], own_target=true)
+{
+  "plugin_findings": [
+    { "plugin": "idor", "category": "idor_candidate", "severity": "medium",
+      "title": "GET /api/items/{id} returned 200 for an id never linked from the page" },
+    { "plugin": "auth_bypass", "category": "auth_bypass", "severity": "high",
+      "title": "GET /api/admin/stats returned 200 with no auth header at all" }
+  ]
+}
+```
+
+**Spec-driven API scan** — fuzz an OpenAPI/GraphQL spec straight over HTTP, no DOM:
+
+```jsonc
+// call: qa_api_scan(spec={"kind": "openapi", "raw": "<contents of openapi.json>"},
+//                    base_url="http://127.0.0.1:8000", own_target=true)
+{ "run_id": "...", "forms_scanned": 2, "findings": [ /* per-operation findings */ ] }
+```
+
+**Record a login once, replay it on every future scan**:
+
+```jsonc
+// call: qa_login_record(login_url="http://127.0.0.1:8000/login",
+//                        username="admin", password="secret")
+{
+  "macro": { "login_url": "...", "username_selector": "#username", "...": "..." },
+  "auth_result": { "authenticated": true, "cookies": [ { "name": "session", "...": "..." } ] }
+}
+// save `macro` to a file, then: qa_scan(url="...", login_macro=<saved macro>)
 ```
 
 **Authenticated scan** — cookies injected before any navigation:
