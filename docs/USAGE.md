@@ -361,11 +361,12 @@ Example MCP client config entry (stdio transport):
 
 ## What QAi does *not* do (by design)
 
-- No multi-page crawling / state-graph exploration (see `PLAN.md` CUT-list — this is
-  a deliberately separate, larger effort, not silently attempted here).
 - No CAPTCHA solving or anti-bot bypass, ever.
-- No destructive-click guard (because there's no autonomous clicking beyond the one
-  form you pointed it at) — don't point QAi at a page whose only form is a "Delete
-  account" button.
+- No injection/SQLi/XSS active checks yet — `idor`/`auth_bypass` are the first two
+  active checks; more follow the same `Check`/`ReplayClient` seam (see docs/PLUGINS.md).
+- No multi-hop OAuth/SSO login recording — `qa_login_record` handles a single-page
+  username+password form POST; a multi-step login raises `LoginFailedError`.
+- No crawl-wide session refresh — auth (cookies/`login_macro`) is established once
+  before a scan/crawl starts, not re-established on a mid-crawl 401.
 - No AI/LLM calls anywhere in the pipeline — every decision (field typing, fuzz
-  values, oracle, correlation) is deterministic code.
+  values, oracle, correlation, IDOR/auth-bypass replay) is deterministic code.

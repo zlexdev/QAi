@@ -365,27 +365,24 @@ no raw dicts between layers.
 
 ## Safety
 
-Only run against **staging**, never production — the fuzzer submits forms with
-malicious/overflow payloads. This MVP does not click destructive buttons or crawl
-beyond one form (see `PLAN.md` CUT-list); an autonomous state-graph crawler with a
-destructive-action guard is a separate, later effort.
+Only run against **staging**, or your own targets — the fuzzer submits forms with
+malicious/overflow payloads and, with `plugins=["idor","auth_bypass"]`, fires real
+mutated replay requests. Links/buttons matching a destructive keyword are never
+clicked during a crawl unless explicitly allow-listed (`--allow-destructive` /
+`allow_destructive=[...]`) — see `qai.engine.risk` for the heuristic.
 
 Non-local targets require `--i-own-this-target` (CLI) / `own_target=True` (MCP) before
-anything is filled or submitted — otherwise qai only inventories the page's fields.
-qai never attempts to solve or bypass a CAPTCHA/anti-bot challenge; it waits out an
-automatic Cloudflare JS check and otherwise proceeds honestly (an unresolved
-interactive challenge just means an honestly-empty result, not a crash or a bypass).
-
-## Status
-
-MVP = Phases 0–3 from `PLAN.md`. Phase 4 (state-graph crawling, recursion, destructive-
-action guard) is intentionally out of scope for this release.
+anything is filled, submitted, or actively replayed — otherwise qai only inventories
+the page's fields and active checks are always `SKIPPED`. qai never attempts to solve
+or bypass a CAPTCHA/anti-bot challenge; it waits out an automatic Cloudflare JS check
+and otherwise proceeds honestly (an unresolved interactive challenge just means an
+honestly-empty result, not a crash or a bypass).
 
 ## See also
 
 - [docs/USAGE.md](docs/USAGE.md) — full CLI/library/MCP reference, troubleshooting, safety model
+- [docs/PLUGINS.md](docs/PLUGINS.md) — writing a check plugin (passive or active)
 - [docs/REPORTS.md](docs/REPORTS.md) — report formats (JSON/HTML/Markdown) and auto-save
-- [PLAN.md](PLAN.md) — MVP phase breakdown (Phases 0–3) and the CUT-list
 - [mini-plat.md](mini-plat.md) — the full architecture this project instantiates
 
 ## License
