@@ -20,6 +20,12 @@ Both build a synthetic `FuzzPlan` (username field as the nominal `field_under_te
 `FormExecutor(session).run(form, plan)` — the login form is filled/submitted through
 the SAME code path every other form is.
 
+## Credential at rest (found by `/review`, documented not silently fixed)
+`LoginMacro.password_value` is plaintext, not `SecretStr` — a saved macro file must
+round-trip through JSON and replay the REAL password (`SecretStr` masks JSON dumps
+too, which would break replay). A saved macro is a credential: don't commit it,
+don't share it, treat the file like a plaintext password.
+
 ## Known v1 limitations (see plan `05-risks.md`)
 - Single-page username+password POST form only — multi-step SSO logins raise
   `LoginFailedError` (no `FieldKind.PASSWORD` field found on the given URL).

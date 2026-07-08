@@ -1,5 +1,12 @@
 """auth contracts — LoginMacro (a saved, replayable recording of a login form
-submission) and AuthResult (what came back: cookies + optional bearer token)."""
+submission) and AuthResult (what came back: cookies + optional bearer token).
+
+LoginMacro.password_value is plaintext, not SecretStr: a saved macro file must
+round-trip through model_dump_json()/model_validate_json() and replay the REAL
+password (pydantic's SecretStr masks even JSON dumps, which would break replay —
+a saved macro would silently try to log in with the literal string "**********").
+A saved macro file is therefore a credential at rest — treat it like one: don't
+commit it, don't share it, store it with the same care as a plaintext password file."""
 
 from __future__ import annotations
 
