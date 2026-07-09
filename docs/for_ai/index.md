@@ -7,15 +7,10 @@ the whole tree.
 ## Read order
 
 1. **This file** — package map + where each concern lives.
-2. **`_MODULE_AUTO.md`** in the package/subpackage you're touching
-   (`qai/_MODULE_AUTO.md`, `qai/engine/_MODULE_AUTO.md`, `qai/engine/plugins/_MODULE_AUTO.md`, ...)
-   — auto-generated signature index (every public class/function, one line each).
-   Usually enough to answer "does X exist / what's its signature" without opening
-   the file.
-3. **`docs/USAGE.md`** — full CLI flags, library call shape, all MCP tool signatures.
-4. **`docs/PLUGINS.md`** — how to write a check plugin (passive or active).
-5. **`docs/REPORTS.md`** — JSON/HTML/Markdown report shapes.
-6. Only open source directly when a doc is missing, stale, or you need exact
+2. **`docs/USAGE.md`** — full CLI flags, library call shape, all MCP tool signatures.
+3. **`docs/PLUGINS.md`** — how to write a check plugin (passive or active).
+4. **`docs/REPORTS.md`** — JSON/HTML/Markdown report shapes.
+5. Only open source directly when a doc is missing, stale, or you need exact
    control flow (e.g. reading `explorer.py`'s BFS loop line by line).
 
 ## Package map
