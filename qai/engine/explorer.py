@@ -12,10 +12,12 @@ from __future__ import annotations
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 from qai.engine.capture import CaptureSession
 from qai.engine.contracts import (
     ActionKind,
+    BudgetExhaustedBy,
     CrawlAction,
     CrawlBudget,
     PageModel,
@@ -26,7 +28,7 @@ from qai.engine.contracts import (
 from qai.engine.logging import get_logger
 from qai.engine.modeler import PageModeler
 from qai.engine.risk import is_allowlisted, is_destructive
-from qai.engine.state import compute_state, normalize_url, url_template
+from qai.engine.state import compute_state, is_in_scope_any, normalize_url, url_template
 
 _log = get_logger("explorer")
 _CLICK_SETTLE_MS = 500
@@ -43,7 +45,7 @@ class ExplorerResult:
     states: list[StateRef] = field(default_factory=list)
     skipped_destructive: list[CrawlAction] = field(default_factory=list)
     not_visited: list[SkippedPage] = field(default_factory=list)
-    budget_exhausted_by: str | None = None
+    budget_exhausted_by: BudgetExhaustedBy | None = None
 
 
 def _target_of(path: list[CrawlAction]) -> str:
@@ -85,13 +87,15 @@ class Explorer:
         # Dedups discovered links before queueing — a header/footer/mobile-nav trio
         # linking to the same URL three times must not burn 3x the budget on one target.
         queued_urls: set[str] = {normalize_url(root_url)}
+        root_host = urlsplit(root_url).hostname or ""
+        allowed_hosts = {root_host, *self._budget.allowed_domains}
 
         while frontier:
             if visited_count >= self._budget.max_actions:
-                result.budget_exhausted_by = "max_actions"
+                result.budget_exhausted_by = BudgetExhaustedBy.MAX_ACTIONS
                 break
             if time.monotonic() >= deadline:
-                result.budget_exhausted_by = "wall_clock"
+                result.budget_exhausted_by = BudgetExhaustedBy.WALL_CLOCK
                 break
 
             path, depth = frontier.popleft()
@@ -134,6 +138,14 @@ class Explorer:
                     if norm in queued_urls:
                         continue
                     queued_urls.add(norm)
+                    if not is_in_scope_any(
+                        raw["href"], allowed_hosts, include_subdomains=self._budget.include_subdomains
+                    ):
+                        result.not_visited.append(
+                            SkippedPage(url=norm, reason=SkipReason.OFF_DOMAIN)
+                        )
+                        _log.info("off_domain_skipped", url=norm, root_host=root_host)
+                        continue
                     template = url_template(norm)
                     template_seen = self._template_counts.get(template, 0)
                     if template_seen >= self._budget.max_pages_per_template:
@@ -159,7 +171,7 @@ class Explorer:
         if result.budget_exhausted_by is not None and frontier:
             reason = (
                 SkipReason.BUDGET_WALL_CLOCK
-                if result.budget_exhausted_by == "wall_clock"
+                if result.budget_exhausted_by == BudgetExhaustedBy.WALL_CLOCK
                 else SkipReason.BUDGET_MAX_ACTIONS
             )
             result.not_visited.extend(
@@ -173,11 +185,12 @@ class Explorer:
         navigation (robust — selectors can shift between visits); buttons replay via
         click (the only way to trigger SPA-only state changes)."""
         await self._session.open(root_url)
+        timeouts = self._session.timeouts
         for action in path:
             if action.kind is ActionKind.LINK and action.href:
                 await self._session.page.goto(
-                    action.href, timeout=15_000, wait_until="domcontentloaded"
+                    action.href, timeout=timeouts.nav_ms, wait_until="domcontentloaded"
                 )
             else:
-                await self._session.page.click(action.selector, timeout=5_000)
+                await self._session.page.click(action.selector, timeout=timeouts.action_ms)
             await self._session.page.wait_for_timeout(_CLICK_SETTLE_MS)

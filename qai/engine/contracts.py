@@ -266,6 +266,12 @@ class SkipReason(StrEnum):
     TRAP_DETECTED = "trap_detected"
     REPLAY_FAILED = "replay_failed"
     DUPLICATE_TEMPLATE = "duplicate_template"
+    OFF_DOMAIN = "off_domain"
+
+
+class BudgetExhaustedBy(StrEnum):
+    MAX_ACTIONS = "max_actions"
+    WALL_CLOCK = "wall_clock"
 
 
 class SkippedPage(BaseModel):
@@ -348,6 +354,22 @@ class CookieSpec(BaseModel):
         }
 
 
+class TimeoutConfig(BaseModel):
+    """Wait budgets for browser interactions. Override when a target is slow (heavy
+    JS, distant/rate-limited hosting) instead of hardcoding a longer wait everywhere —
+    a target that legitimately needs 30s to settle should not have to eat a
+    ``replay_failed``/``CaptureError`` at the default 15s nav budget. Defaults match
+    the values used before this was configurable."""
+
+    model_config = _FROZEN
+    nav_ms: int = 15_000
+    networkidle_ms: int = 5_000
+    dom_stable_ms: int = 4_000
+    cloudflare_wait_ms: int = 15_000
+    action_ms: int = 5_000
+    fill_ms: int = 3_000
+
+
 class CrawlBudget(BaseModel):
     model_config = _FROZEN
     max_depth: int = 2
@@ -361,6 +383,14 @@ class CrawlBudget(BaseModel):
     # a listing site with hundreds of same-shaped detail pages burns the whole budget
     # on near-identical pages before the crawler leaves the first template.
     max_pages_per_template: int = 1
+    # Off-root-domain links (e.g. a Telegram/GitHub footer link from the target site)
+    # are never followed — only the root's exact host, plus its subdomains when this
+    # is True. Links outside scope are recorded as SkipReason.OFF_DOMAIN, never visited.
+    include_subdomains: bool = True
+    # Extra hosts allowed alongside the root's own (e.g. a separate auth/SSO or API
+    # subdomain that isn't a subdomain of the root). Each entry follows the same
+    # include_subdomains rule as the root host.
+    allowed_domains: list[str] = Field(default_factory=list)
 
 
 class CrawlReport(BaseModel):
@@ -376,7 +406,7 @@ class CrawlReport(BaseModel):
     pages_not_visited: list[SkippedPage] = Field(default_factory=list)
     pages_not_fuzzed: list[SkippedPage] = Field(default_factory=list)
     skipped_destructive: list[CrawlAction] = Field(default_factory=list)
-    budget_exhausted_by: str | None = None
+    budget_exhausted_by: BudgetExhaustedBy | None = None
 
     @property
     def findings(self) -> list[Finding]:

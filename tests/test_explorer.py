@@ -71,6 +71,22 @@ def _duplicate_links_app() -> FastAPI:
     return app
 
 
+def _off_domain_app() -> FastAPI:
+    """A footer link to an unrelated external domain (Telegram/GitHub-style) must
+    never be followed — only the root's own host is in scope."""
+    app = FastAPI()
+
+    @app.get("/", response_class=HTMLResponse)
+    async def root() -> str:
+        return '<a href="/a">A</a><a href="https://example.com/external">External</a>'
+
+    @app.get("/a", response_class=HTMLResponse)
+    async def page_a() -> str:
+        return "<p>A</p>"
+
+    return app
+
+
 def _templated_listing_app() -> FastAPI:
     """5 structurally identical detail pages under a numeric id — the funpay.com
     pattern (900+ /lots/<id> pages) that burns a crawl's whole time budget on one
@@ -112,6 +128,14 @@ def crawl_site() -> Iterator[str]:
 @pytest.fixture
 def duplicate_links_site() -> Iterator[str]:
     url, server, thread = _start_server(_duplicate_links_app())
+    yield url
+    server.should_exit = True
+    thread.join(timeout=5)
+
+
+@pytest.fixture
+def off_domain_site() -> Iterator[str]:
+    url, server, thread = _start_server(_off_domain_app())
     yield url
     server.should_exit = True
     thread.join(timeout=5)
@@ -181,6 +205,40 @@ async def test_same_template_pages_are_deduped_to_one(templated_listing_site: st
     assert SkipReason.DUPLICATE_TEMPLATE in skipped_reasons
     skipped_item_urls = [p.url for p in result.not_visited if "/items/" in p.url]
     assert len(skipped_item_urls) == 4
+
+
+async def test_explorer_never_follows_off_domain_links(off_domain_site: str) -> None:
+    budget = CrawlBudget(max_depth=2, max_actions=10, wall_clock_seconds=30)
+    async with CaptureSession(headless=True, run_id="t") as session:
+        explorer = Explorer(session, budget)
+        result = await explorer.crawl(off_domain_site)
+
+    visited_urls = {s.normalized_url for s in result.states}
+    assert normalize_url(f"{off_domain_site}/a") in visited_urls
+    assert not any("example.com" in u for u in visited_urls)
+
+    off_domain_skips = [p for p in result.not_visited if p.reason == SkipReason.OFF_DOMAIN]
+    assert len(off_domain_skips) == 1
+    assert "example.com" in off_domain_skips[0].url
+
+
+async def test_explorer_follows_extra_allowed_domain(off_domain_site: str) -> None:
+    """example.com is off-domain by default (see test above), but listed explicitly
+    in allowed_domains it must be followed — an auth/SSO or API subdomain that isn't
+    a subdomain of the root still needs to be reachable."""
+    budget = CrawlBudget(
+        max_depth=2, max_actions=10, wall_clock_seconds=30, allowed_domains=["example.com"]
+    )
+    async with CaptureSession(headless=True, run_id="t") as session:
+        explorer = Explorer(session, budget)
+        result = await explorer.crawl(off_domain_site)
+
+    visited_urls = {s.normalized_url for s in result.states}
+    assert any("example.com" in u for u in visited_urls)
+    off_domain_skip_urls = [
+        p.url for p in result.not_visited if p.reason == SkipReason.OFF_DOMAIN
+    ]
+    assert not any("example.com" in u for u in off_domain_skip_urls)
 
 
 async def test_explorer_respects_max_actions_budget(crawl_site: str) -> None:

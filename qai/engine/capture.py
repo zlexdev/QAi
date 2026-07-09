@@ -40,20 +40,18 @@ from qai.engine.contracts import (
     NavKind,
     ResponseKind,
     StackFrame,
+    TimeoutConfig,
 )
 from qai.engine.errors import CaptureError
 from qai.engine.logging import get_logger
 
 _log = get_logger("capture")
 
-_NAV_TIMEOUT_MS = 15_000
 _SETTLE_MS = 800
 _BODY_PREVIEW_LEN = 4_000
-_NETWORKIDLE_TIMEOUT_MS = 5_000
-_DOM_STABLE_TIMEOUT_MS = 4_000
+_MS_PER_SECOND = 1_000
 _DOM_STABLE_POLL_MS = 400
 _DOM_STABLE_CONSECUTIVE = 2
-_CF_WAIT_TIMEOUT_MS = 15_000
 _CF_POLL_MS = 500
 _CF_TITLE_MARKERS = ("just a moment", "checking your browser", "attention required")
 _ERROR_SELECTOR = '[role="alert"], .error, .alert-danger, [aria-invalid="true"]'
@@ -113,6 +111,7 @@ class CaptureSession:
         stability_cache: dict[str, float] | None = None,
         cookies: list[CookieSpec] | None = None,
         default_headers: dict[str, str] | None = None,
+        timeouts: TimeoutConfig | None = None,
     ) -> None:
         self._headless = headless
         self._run_id = run_id
@@ -121,6 +120,7 @@ class CaptureSession:
         self._pool = pool
         self._cookies = cookies or []
         self._default_headers = default_headers
+        self.timeouts = timeouts or TimeoutConfig()
         # origin -> observed DOM-stability settle time (seconds); shared across tabs in
         # the same run so only the FIRST load of a given origin pays the full poll cap.
         self._stability_cache = stability_cache if stability_cache is not None else {}
@@ -322,7 +322,9 @@ class CaptureSession:
         last: Exception | None = None
         for attempt in (1, 2):
             try:
-                await self.page.goto(url, timeout=_NAV_TIMEOUT_MS, wait_until="domcontentloaded")
+                await self.page.goto(
+                    url, timeout=self.timeouts.nav_ms, wait_until="domcontentloaded"
+                )
                 await self._wait_out_cloudflare()
                 await self._wait_networkidle_best_effort()
                 if not capture_load:
@@ -340,7 +342,7 @@ class CaptureSession:
         solve/click/bypass anything — an interactive CAPTCHA is left as-is and we
         simply proceed (the resulting capture will honestly show the challenge page)."""
         loop = asyncio.get_event_loop()
-        deadline = loop.time() + _CF_WAIT_TIMEOUT_MS / 1000
+        deadline = loop.time() + self.timeouts.cloudflare_wait_ms / _MS_PER_SECOND
         while loop.time() < deadline:
             title = (await self.page.title()).lower()
             if not any(marker in title for marker in _CF_TITLE_MARKERS):
@@ -353,7 +355,9 @@ class CaptureSession:
         treat a timeout as normal, not an error."""
         # Best-effort stability wait — a timeout here is normal (SPAs keep polling), not an error.
         with contextlib.suppress(Exception):
-            await self.page.wait_for_load_state("networkidle", timeout=_NETWORKIDLE_TIMEOUT_MS)
+            await self.page.wait_for_load_state(
+                "networkidle", timeout=self.timeouts.networkidle_ms
+            )
         await self._wait_dom_stable()
 
     async def _wait_dom_stable(self) -> None:
@@ -372,15 +376,16 @@ class CaptureSession:
         origin = _origin_of(self.page.url)
         cached_ms = self._stability_cache.get(origin)
         floor_ms = _DOM_STABLE_POLL_MS * (_DOM_STABLE_CONSECUTIVE + 1)
+        dom_stable_ms = self.timeouts.dom_stable_ms
         budget_ms = (
-            _DOM_STABLE_TIMEOUT_MS
+            dom_stable_ms
             if cached_ms is None
-            else min(_DOM_STABLE_TIMEOUT_MS, max(cached_ms * 1.5, floor_ms))
+            else min(dom_stable_ms, max(cached_ms * 1.5, floor_ms))
         )
 
         loop = asyncio.get_event_loop()
         start = loop.time()
-        deadline = start + budget_ms / 1000
+        deadline = start + budget_ms / _MS_PER_SECOND
         try:
             last_count = await self.page.evaluate("document.querySelectorAll('*').length")
         except Exception:
@@ -395,7 +400,7 @@ class CaptureSession:
             consecutive_matches = consecutive_matches + 1 if count == last_count else 0
             last_count = count
 
-        elapsed_ms = (loop.time() - start) * 1000
+        elapsed_ms = (loop.time() - start) * _MS_PER_SECOND
         self._stability_cache[origin] = max(cached_ms or 0.0, elapsed_ms)
 
     async def _snapshot_dom_errors(self) -> set[str]:

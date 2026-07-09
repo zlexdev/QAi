@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterable
 from urllib.parse import urlsplit, urlunsplit
 
 from playwright.async_api import Page
@@ -43,6 +44,28 @@ def normalize_url(url: str) -> str:
     parts = urlsplit(url)
     path = parts.path.rstrip("/") or "/"
     return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
+
+
+def is_in_scope(url: str, root_host: str, *, include_subdomains: bool) -> bool:
+    """True if ``url``'s host is ``root_host`` itself, or (when allowed) a subdomain
+    of it. Used by the crawler to keep BFS discovery on the target site instead of
+    wandering off into footer/nav links to unrelated domains (Telegram, GitHub, ...)."""
+    host = (urlsplit(url).hostname or "").lower()
+    root = root_host.lower()
+    if not host or not root:
+        return False
+    if host == root:
+        return True
+    return include_subdomains and host.endswith(f".{root}")
+
+
+def is_in_scope_any(url: str, allowed_hosts: Iterable[str], *, include_subdomains: bool) -> bool:
+    """``is_in_scope`` against a set of allowed hosts — the crawl's own root plus any
+    extra ``CrawlBudget.allowed_domains`` (e.g. a separate auth/SSO or API subdomain
+    that isn't a subdomain of the root)."""
+    return any(
+        is_in_scope(url, host, include_subdomains=include_subdomains) for host in allowed_hosts
+    )
 
 
 def url_template(url: str) -> str:

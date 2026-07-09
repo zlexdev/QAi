@@ -43,14 +43,11 @@ async run_api_scan(spec: ApiSpecSource, base_url: str, repo_path: str? = None, h
 ```
 # CaptureSession — thin wrapper over Playwright + CDP that maps browser events to DTOs.
 
-_NAV_TIMEOUT_MS = 15000
 _SETTLE_MS = 800
 _BODY_PREVIEW_LEN = 4000
-_NETWORKIDLE_TIMEOUT_MS = 5000
-_DOM_STABLE_TIMEOUT_MS = 4000
+_MS_PER_SECOND = 1000
 _DOM_STABLE_POLL_MS = 400
 _DOM_STABLE_CONSECUTIVE = 2
-_CF_WAIT_TIMEOUT_MS = 15000
 _CF_POLL_MS = 500
 _CF_TITLE_MARKERS = …
 _ERROR_SELECTOR = …
@@ -137,7 +134,9 @@ cls Finding(BaseModel)
 
 cls RequestTemplate(BaseModel)
 
-cls SkipReason(StrEnum): BUDGET_MAX_ACTIONS, BUDGET_WALL_CLOCK, TRAP_DETECTED, REPLAY_FAILED, DUPLICATE_TEMPLATE
+cls SkipReason(StrEnum): BUDGET_MAX_ACTIONS, BUDGET_WALL_CLOCK, TRAP_DETECTED, REPLAY_FAILED, DUPLICATE_TEMPLATE, OFF_DOMAIN
+
+cls BudgetExhaustedBy(StrEnum): MAX_ACTIONS, WALL_CLOCK
 
 cls SkippedPage(BaseModel)
   # A page the crawler discovered a link/button to but never actually visited.
@@ -151,6 +150,8 @@ cls RunReport(BaseModel)
 
 cls CookieSpec(BaseModel)
   to_playwright() -> dict[str, str | bool]
+
+cls TimeoutConfig(BaseModel)
 
 cls CrawlBudget(BaseModel)
 
@@ -288,7 +289,7 @@ _CLICK_SETTLE_MS = 500
 _UNKNOWN_TARGET = '(unknown — SPA action chain, not a direct link)'
 _FRONTIER_SAFETY_CAP = 2000
 
-cls ExplorerResult: visited: list[tuple[StateRef, PageModel]], states: list[StateRef], skipped_destructive: list[CrawlAction], not_visited: list[SkippedPage], budget_exhausted_by: str | None
+cls ExplorerResult: visited: list[tuple[StateRef, PageModel]], states: list[StateRef], skipped_destructive: list[CrawlAction], not_visited: list[SkippedPage], budget_exhausted_by: BudgetExhaustedBy | None
 
 cls Explorer
   # Crawls same-origin states reachable from a root URL, within a CrawlBudget.
@@ -402,7 +403,7 @@ async _run_plugins(plugins: list[str]?, page_model: PageModel, recon_effect: Eff
 
 async _fuzz_page_model() -> tuple[list[Finding], int, int, list[str]]
 
-async _run_worker(url: str, bucket: list[WorkItem, tab_index: int, run_id: str, headless: bool, har_dir: str?, correlator: CodeCorrelator?, har_paths: list[str, direct_mode: bool, templates: dict[str, RequestTemplate?, pool: BrowserPool, stability_cache: dict[str, float, cookies: list[CookieSpec]? = None) -> list[Finding]
+async _run_worker(url: str, bucket: list[WorkItem, tab_index: int, run_id: str, headless: bool, har_dir: str?, correlator: CodeCorrelator?, har_paths: list[str, direct_mode: bool, templates: dict[str, RequestTemplate?, pool: BrowserPool, stability_cache: dict[str, float, cookies: list[CookieSpec]? = None, timeouts: TimeoutConfig? = None) -> list[Finding]
 
 async _fuzz_form(session: CaptureSession, executor: FormExecutor, analyzer: Analyzer, templates: dict[str, RequestTemplate?, correlator: CodeCorrelator?, url: str, form: FormModel, plan: FuzzPlan, direct_mode: bool) -> list[Finding]
 
@@ -421,6 +422,10 @@ _STRUCTURAL_SIGNATURE_JS = …
 
 normalize_url(url: str) -> str
   # Strip fragment (SPA router hash aside) and trailing slash for stable comparison.
+
+is_in_scope(url: str, root_host: str) -> bool
+
+is_in_scope_any(url: str, allowed_hosts: Iterable[str) -> bool
 
 url_template(url: str) -> str
 

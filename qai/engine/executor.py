@@ -32,7 +32,9 @@ class FormExecutor:
                 value = plan.values.get(field.selector, "")
                 await self._fill(field.selector, field.kind, value)
             if form.submit_selector:
-                await self._session.page.click(form.submit_selector, timeout=5_000)
+                await self._session.page.click(
+                    form.submit_selector, timeout=self._session.timeouts.action_ms
+                )
             else:
                 await self._session.page.keyboard.press("Enter")
 
@@ -40,18 +42,19 @@ class FormExecutor:
 
     async def _fill(self, selector: str, kind: FieldKind, value: str) -> None:
         page = self._session.page
+        fill_ms = self._session.timeouts.fill_ms
         try:
             if kind in _TEXT_LIKE:
                 await self._neutralize_constraints(selector)
-                await page.fill(selector, value, timeout=3_000)
+                await page.fill(selector, value, timeout=fill_ms)
             elif kind is FieldKind.SELECT:
                 if value:
-                    await page.select_option(selector, value=value, timeout=3_000)
+                    await page.select_option(selector, value=value, timeout=fill_ms)
             elif kind in {FieldKind.CHECKBOX, FieldKind.RADIO}:
                 if value == "on":
-                    await page.check(selector, timeout=3_000)
+                    await page.check(selector, timeout=fill_ms)
                 else:
-                    await page.uncheck(selector, timeout=3_000)
+                    await page.uncheck(selector, timeout=fill_ms)
             # FILE: skipped in MVP (strategies.FileStrategy yields no cases).
         except Exception as exc:
             _log.warning("fill_failed", selector=selector, error=str(exc))

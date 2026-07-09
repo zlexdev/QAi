@@ -16,7 +16,7 @@ from qai.engine.apispec.contracts import ApiSpecKind, ApiSpecSource
 from qai.engine.auth.contracts import LoginMacro
 from qai.engine.auth.recorder import record_login
 from qai.engine.capture import BrowserPool
-from qai.engine.contracts import CookieSpec, CrawlBudget, ScanReport
+from qai.engine.contracts import CookieSpec, CrawlBudget, ScanReport, TimeoutConfig
 from qai.engine.errors import InvalidCookieSpecError, QaiError
 from qai.engine.logging import configure_logging
 from qai.engine.reporter import Reporter
@@ -101,7 +101,37 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-actions", type=int, default=50, help="Crawl: max links/buttons followed"
     )
     parser.add_argument(
-        "--wall-clock", type=int, default=180, help="Crawl: overall time budget in seconds"
+        "--wall-clock", type=int, default=300, help="Crawl: overall time budget in seconds"
+    )
+    parser.add_argument(
+        "--no-subdomains",
+        action="store_true",
+        help="Crawl: only follow the exact root host, not its subdomains",
+    )
+    parser.add_argument(
+        "--nav-timeout",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Override the page-navigation wait budget (default 15s) — raise it for a "
+        "target that's legitimately slow to respond",
+    )
+    parser.add_argument(
+        "--dom-stable-timeout",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Override the post-load DOM-settle wait budget (default 4s) — raise it for "
+        "a heavy client-rendered page whose forms/buttons take longer to mount",
+    )
+    parser.add_argument(
+        "--allowed-domain",
+        dest="allowed_domains",
+        action="append",
+        default=[],
+        metavar="HOST",
+        help="Crawl: extra host allowed alongside the root (repeatable) — e.g. a "
+        "separate auth/SSO or API subdomain that isn't a subdomain of the root",
     )
     parser.add_argument(
         "--allow-destructive",
@@ -214,6 +244,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cookies = [_parse_cookie_arg(raw) for raw in args.cookies]
         login_macro = asyncio.run(_load_login_macro(args.login_macro)) if args.login_macro else None
+        timeout_overrides: dict[str, int] = {}
+        if args.nav_timeout is not None:
+            timeout_overrides["nav_ms"] = int(args.nav_timeout * 1000)
+        if args.dom_stable_timeout is not None:
+            timeout_overrides["dom_stable_ms"] = int(args.dom_stable_timeout * 1000)
+        timeouts = TimeoutConfig(**timeout_overrides) if timeout_overrides else None
 
         if args.spec:
             spec_source = ApiSpecSource(
@@ -235,6 +271,8 @@ def main(argv: list[str] | None = None) -> int:
                 max_depth=args.max_depth,
                 max_actions=args.max_actions,
                 wall_clock_seconds=args.wall_clock,
+                include_subdomains=not args.no_subdomains,
+                allowed_domains=args.allowed_domains,
             )
             report = asyncio.run(
                 run_crawl(
@@ -249,6 +287,7 @@ def main(argv: list[str] | None = None) -> int:
                     direct_mode=args.direct_mode,
                     cookies=cookies,
                     login_macro=login_macro,
+                    timeouts=timeouts,
                 )
             )
         else:
@@ -265,6 +304,7 @@ def main(argv: list[str] | None = None) -> int:
                     login_macro=login_macro,
                     screenshot=args.screenshot,
                     screenshot_dir=args.screenshot_dir,
+                    timeouts=timeouts,
                 )
             )
     except QaiError as exc:

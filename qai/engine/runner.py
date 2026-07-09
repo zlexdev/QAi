@@ -24,6 +24,7 @@ from qai.engine.auth.contracts import LoginMacro
 from qai.engine.auth.replayer import replay_login
 from qai.engine.capture import BrowserPool, CaptureSession
 from qai.engine.contracts import (
+    BudgetExhaustedBy,
     CookieSpec,
     CrawlBudget,
     CrawlReport,
@@ -39,6 +40,7 @@ from qai.engine.contracts import (
     RunReport,
     SkippedPage,
     SkipReason,
+    TimeoutConfig,
 )
 from qai.engine.correlator import CodeCorrelator, build_route_table, require_repo
 from qai.engine.direct_executor import DirectExecutor, learn_template
@@ -103,6 +105,7 @@ async def run_scan(
     login_macro: LoginMacro | None = None,
     screenshot: bool = False,
     screenshot_dir: str | None = None,
+    timeouts: TimeoutConfig | None = None,
 ) -> RunReport:
     """Execute the full Phase 0-3 pipeline against ``url`` and return a RunReport.
 
@@ -159,6 +162,7 @@ async def run_scan(
             pool=pool,
             stability_cache=stability_cache,
             cookies=cookies,
+            timeouts=timeouts,
         ) as recon_session:
             page_model, recon_effect, saved_screenshot = await _recon(
                 recon_session, url, screenshot_path=screenshot_path
@@ -199,6 +203,7 @@ async def run_scan(
             direct_mode=direct_mode,
             correlator=correlator,
             cookies=cookies,
+            timeouts=timeouts,
         )
     finally:
         await pool.close()
@@ -291,6 +296,7 @@ async def _fuzz_page_model(
     direct_mode: bool,
     correlator: CodeCorrelator | None,
     cookies: list[CookieSpec] | None = None,
+    timeouts: TimeoutConfig | None = None,
 ) -> tuple[list[Finding], int, int, list[str]]:
     """Fuzzes every field of an already-modeled page. Factored out of ``run_scan`` so
     ``run_crawl`` can fuzz Explorer's already-visited pages directly, instead of paying
@@ -325,6 +331,7 @@ async def _fuzz_page_model(
                 pool,
                 stability_cache,
                 cookies,
+                timeouts,
             )
             for tab_index, bucket in enumerate(buckets)
             if bucket
@@ -348,6 +355,7 @@ async def _run_worker(
     pool: BrowserPool,
     stability_cache: dict[str, float],
     cookies: list[CookieSpec] | None = None,
+    timeouts: TimeoutConfig | None = None,
 ) -> list[Finding]:
     tab_id = f"tab-{tab_index}"
     har_path = str(Path(har_dir) / f"{run_id}-{tab_id}.har") if har_dir else None
@@ -363,6 +371,7 @@ async def _run_worker(
         pool=pool,
         stability_cache=stability_cache,
         cookies=cookies,
+        timeouts=timeouts,
     ) as session:
         executor = FormExecutor(session)
         await session.open(url)
@@ -438,6 +447,7 @@ async def run_crawl(
     direct_mode: bool = False,
     cookies: list[CookieSpec] | None = None,
     login_macro: LoginMacro | None = None,
+    timeouts: TimeoutConfig | None = None,
 ) -> CrawlReport:
     """Phase 4: discover same-origin states reachable from ``url`` (BFS, budgeted),
     then run the Phase 0-3 fuzz pipeline against every discovered page that has a form.
@@ -469,6 +479,7 @@ async def run_crawl(
             pool=pool,
             stability_cache=stability_cache,
             cookies=cookies,
+            timeouts=timeouts,
         ) as session:
             explorer = Explorer(session, active_budget, allowlist=allowlist)
             result = await explorer.crawl(root)
@@ -507,6 +518,7 @@ async def run_crawl(
                     direct_mode=direct_mode,
                     correlator=correlator,
                     cookies=cookies,
+                    timeouts=timeouts,
                 )
             pages.append(
                 RunReport(
@@ -538,7 +550,7 @@ async def run_crawl(
         pages_not_fuzzed=pages_not_fuzzed,
         skipped_destructive=result.skipped_destructive,
         budget_exhausted_by=result.budget_exhausted_by
-        or ("wall_clock" if pages_not_fuzzed else None),
+        or (BudgetExhaustedBy.WALL_CLOCK if pages_not_fuzzed else None),
     )
     _log.info(
         "crawl_complete",

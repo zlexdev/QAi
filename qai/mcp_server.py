@@ -25,7 +25,7 @@ from qai.engine.auth.contracts import LoginMacro
 from qai.engine.auth.recorder import record_login
 from qai.engine.auth.replayer import replay_login
 from qai.engine.capture import BrowserPool, CaptureSession
-from qai.engine.contracts import CookieSpec, CrawlBudget, RunReport
+from qai.engine.contracts import CookieSpec, CrawlBudget, RunReport, TimeoutConfig
 from qai.engine.errors import (
     InvalidCookieSpecError,
     InvalidSpecError,
@@ -107,6 +107,21 @@ def _resolve_safe_mode(url: str, own_target: bool) -> bool:
     return not (own_target or urlparse(url).hostname in _LOCAL_HOSTS)
 
 
+def _build_timeouts(
+    nav_timeout_seconds: float | None, dom_stable_timeout_seconds: float | None
+) -> TimeoutConfig | None:
+    """``None`` unless the caller overrode at least one wait budget — every other
+    field then falls back to ``TimeoutConfig``'s own default, not to this function's."""
+    if nav_timeout_seconds is None and dom_stable_timeout_seconds is None:
+        return None
+    overrides: dict[str, int] = {}
+    if nav_timeout_seconds is not None:
+        overrides["nav_ms"] = int(nav_timeout_seconds * 1000)
+    if dom_stable_timeout_seconds is not None:
+        overrides["dom_stable_ms"] = int(dom_stable_timeout_seconds * 1000)
+    return TimeoutConfig(**overrides)
+
+
 def _parse_cookies(raw: list[dict[str, str]] | None) -> list[CookieSpec] | None:
     """Each dict needs ``name``/``value``/``domain`` (optional ``path``/``secure``/
     ``http_only``/``same_site``) — a separate auth/SSO subdomain's cookie can be listed
@@ -142,6 +157,8 @@ async def qa_scan(
     login_macro: dict[str, object] | None = None,
     screenshot: bool = False,
     screenshot_dir: str | None = None,
+    nav_timeout_seconds: float | None = None,
+    dom_stable_timeout_seconds: float | None = None,
 ) -> str:
     """Run the full qai pipeline against ``url`` and return a JSON RunReport.
 
@@ -177,8 +194,15 @@ async def qa_scan(
             page qai scanned. ``False`` (default) is a no-op.
         screenshot_dir: directory the screenshot is saved under (default
             ``qai-reports/screenshots``).
+        nav_timeout_seconds: override the page-navigation wait budget (default 15s) —
+            raise it for a target that's legitimately slow to respond instead of
+            eating a false ``CaptureError``.
+        dom_stable_timeout_seconds: override the post-load DOM-settle wait budget
+            (default 4s) — raise it for a heavy client-rendered page whose interactive
+            elements (forms, buttons) take longer to mount after navigation.
     """
     safe_mode = _resolve_safe_mode(url, own_target)
+    timeouts = _build_timeouts(nav_timeout_seconds, dom_stable_timeout_seconds)
     try:
         report = await run_scan(
             url,
@@ -193,6 +217,7 @@ async def qa_scan(
             login_macro=_parse_login_macro(login_macro),
             screenshot=screenshot,
             screenshot_dir=screenshot_dir,
+            timeouts=timeouts,
         )
     except QaiError as exc:
         return json.dumps({"error": str(exc), "error_type": type(exc).__name__})
@@ -253,28 +278,45 @@ async def qa_crawl(
     headless: bool = True,
     max_depth: int = 2,
     max_actions: int = 50,
-    wall_clock_seconds: int = 180,
+    wall_clock_seconds: int = 300,
+    include_subdomains: bool = True,
+    allowed_domains: list[str] | None = None,
     allow_destructive: list[str] | None = None,
     parallel: int = 1,
     own_target: bool = False,
     direct_mode: bool = False,
     cookies: list[dict[str, str]] | None = None,
     login_macro: dict[str, object] | None = None,
+    nav_timeout_seconds: float | None = None,
+    dom_stable_timeout_seconds: float | None = None,
 ) -> str:
     """Discover same-origin pages (BFS, budgeted) from ``url`` and fuzz every form found.
+
+    Links to any host other than ``url``'s own are never followed — only its exact
+    host, plus subdomains when ``include_subdomains`` is True (default), plus any
+    extra hosts listed in ``allowed_domains`` (e.g. a separate auth/SSO or API
+    subdomain that isn't a subdomain of the root — each also follows the
+    ``include_subdomains`` rule). Skipped off-domain links are recorded in the
+    report's ``pages_not_visited`` with reason ``off_domain``, same as any other skip.
 
     Links/buttons whose text matches a destructive keyword (delete/pay/withdraw/transfer/
     удалить/оплатить/... — see ``qai.engine.risk``) are never clicked unless their
     selector is in ``allow_destructive``. This is a heuristic, not a security guarantee —
     review the returned ``skipped_destructive`` list yourself.
 
-    See ``qa_scan`` for the ``own_target``/safe-mode rule and the ``cookies``/
-    ``login_macro`` shape — both apply identically here, per discovered page.
+    See ``qa_scan`` for the ``own_target``/safe-mode rule, the ``cookies``/
+    ``login_macro`` shape, and the ``nav_timeout_seconds``/``dom_stable_timeout_seconds``
+    wait-budget overrides — all apply identically here, per discovered page.
     """
     safe_mode = _resolve_safe_mode(url, own_target)
     budget = CrawlBudget(
-        max_depth=max_depth, max_actions=max_actions, wall_clock_seconds=wall_clock_seconds
+        max_depth=max_depth,
+        max_actions=max_actions,
+        wall_clock_seconds=wall_clock_seconds,
+        include_subdomains=include_subdomains,
+        allowed_domains=allowed_domains or [],
     )
+    timeouts = _build_timeouts(nav_timeout_seconds, dom_stable_timeout_seconds)
     try:
         report = await run_crawl(
             url,
@@ -287,6 +329,7 @@ async def qa_crawl(
             direct_mode=direct_mode,
             cookies=_parse_cookies(cookies),
             login_macro=_parse_login_macro(login_macro),
+            timeouts=timeouts,
         )
     except QaiError as exc:
         return json.dumps({"error": str(exc), "error_type": type(exc).__name__})
