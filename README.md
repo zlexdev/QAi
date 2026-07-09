@@ -2,7 +2,7 @@
 
 # QAi
 
-<strong>Autonomous web-app security scanner that points at the exact line of code where the bug lives</strong>
+<strong>Autonomous QA fuzzer that finds broken forms &amp; APIs and points at the exact line of code where the bug lives</strong>
 
 </p>
 
@@ -13,11 +13,15 @@
   <a href="https://playwright.dev"><img src="https://img.shields.io/badge/browser-Playwright-2ead33?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright"></a>
 </p>
 
-**QAi** is an autonomous web-app security scanner. Give it a `URL` (+ optionally a
-repo, an OpenAPI/GraphQL spec, or a login), it fuzzes forms and API operations,
-replays IDOR/auth-bypass probes, and correlates every finding straight back to
+**QAi** is an autonomous QA fuzzer/validator for web forms and APIs — **not a
+penetration-testing tool.** Give it a `URL` (+ optionally a repo, an OpenAPI/GraphQL
+spec, or a login), it fuzzes every field/operation with valid and malicious input,
+catches whatever breaks (server errors, console errors, a DOM error banner a
+network-only check would miss), and correlates every finding straight back to
 `file:line` — self-hosted, no manual test writing, **no AI/paid APIs required to
-run a scan**.
+run a scan**. A few optional check plugins (IDOR, auth-bypass, security headers)
+add security-adjacent coverage on top of the same fuzz engine — a bonus, not the
+core of what qai does.
 
 [Full documentation](docs/) · [AI-agent docs](docs/for_ai/)
 
@@ -49,19 +53,27 @@ for every CLI flag, library call, and MCP tool signature.
 
 ## Why qai
 
-| | qai | Burp Suite / ZAP | AI pentest SaaS |
-|---|---|---|---|
-| Self-hosted, no account | yes | yes (ZAP) | no — usually cloud-only |
-| No AI / paid API calls to run | yes | yes | no |
-| Bug → exact `file:line` in your repo | yes | no | rarely |
-| Native MCP server (agent-drivable) | yes | no | varies |
-| OpenAPI/GraphQL spec-driven scanning | yes | yes | yes |
-| Active checks (IDOR, auth-bypass) | yes | yes | yes |
-| Free & open source | yes | ZAP: yes / Burp: no | no |
+qai's core loop is QA validation, not security testing: the oracle's question is
+"does this input crash or break the app", the same thing a hand-written end-to-end
+test suite checks, just generated and run automatically instead of typed out by
+hand. The IDOR/auth-bypass/security-header checks are optional plugins layered on
+the same fuzz engine — useful, but a bonus on top of the bug-finding core, not
+what qai primarily is.
 
-The file:line correlation and MCP-native design are the two things a general
-scanner doesn't do: an agent (Claude Code, Cursor, …) can run a scan *and* open
-the exact file the bug lives in, in the same session.
+| | qai | Playwright/Cypress (hand-written E2E) | Burp Suite / ZAP |
+|---|---|---|---|
+| Finds bugs without writing test cases | yes — fuzz-generated | no — you write every case | no — not its job |
+| Bug → exact `file:line` in your repo | yes | no | no |
+| Native MCP server (agent-drivable) | yes | no | no |
+| OpenAPI/GraphQL spec-driven fuzzing | yes | no | yes |
+| Optional security checks (IDOR, auth-bypass) | yes — opt-in plugins | no | yes — that's the whole point |
+| Self-hosted, no AI/paid API calls | yes | yes | yes |
+| Free & open source | yes | yes | ZAP: yes / Burp: no |
+
+The file:line correlation and MCP-native design are the two things neither a
+hand-written test suite nor a general pentest scanner does: an agent (Claude Code,
+Cursor, …) can run a scan *and* open the exact file the bug lives in, in the same
+session.
 
 ## Contents
 
