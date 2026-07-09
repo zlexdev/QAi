@@ -15,9 +15,7 @@ the whole tree.
 3. **`docs/USAGE.md`** — full CLI flags, library call shape, all MCP tool signatures.
 4. **`docs/PLUGINS.md`** — how to write a check plugin (passive or active).
 5. **`docs/REPORTS.md`** — JSON/HTML/Markdown report shapes.
-6. **`mini-plat.md`** — the architecture this project instantiates (layering,
-   design decisions, gotchas) — read for *why*, not *what*.
-7. Only open source directly when a doc is missing, stale, or you need exact
+6. Only open source directly when a doc is missing, stale, or you need exact
    control flow (e.g. reading `explorer.py`'s BFS loop line by line).
 
 ## Package map
@@ -63,4 +61,4 @@ the whole tree.
   (5xx / console-error / DOM error-banner / IDOR / auth-bypass), never an LLM call.
 
 See also: [`../USAGE.md`](../USAGE.md), [`../PLUGINS.md`](../PLUGINS.md),
-[`../REPORTS.md`](../REPORTS.md), [`../../mini-plat.md`](../../mini-plat.md).
+[`../REPORTS.md`](../REPORTS.md).

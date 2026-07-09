@@ -1,8 +1,8 @@
 """State identity for the crawler — a URL alone can't identify an SPA's in-memory
 state, so identity is (normalized URL, structural DOM hash). The hash walks
 tag/role/hierarchy only — never text content or timestamps, which would otherwise
-make a paginated list or a live clock look like infinite unique states
-(mini-plat.md's own "dedup is the main trap" gotcha).
+make a paginated list or a live clock look like infinite unique states —
+dedup is the main trap here.
 """
 
 from __future__ import annotations

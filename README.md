@@ -11,7 +11,7 @@
 
 </div>
 
-[Full documentation](docs/) · [AI-agent docs](docs/for_ai/) · [Architecture](mini-plat.md)
+[Full documentation](docs/) · [AI-agent docs](docs/for_ai/)
 
 Give it a `URL` (+ optionally a repo, an OpenAPI/GraphQL spec, or a login), it fuzzes
 forms and API operations, replays IDOR/auth-bypass probes, and correlates every
@@ -389,7 +389,6 @@ honestly-empty result, not a crash or a bypass).
 - [docs/PLUGINS.md](docs/PLUGINS.md) — writing a check plugin (passive or active)
 - [docs/REPORTS.md](docs/REPORTS.md) — report formats (JSON/HTML/Markdown) and auto-save
 - [docs/for_ai/](docs/for_ai/) — condensed package map for an AI coding agent working in this repo
-- [mini-plat.md](mini-plat.md) — the full architecture this project instantiates
 
 ## Contributing
 

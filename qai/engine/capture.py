@@ -1,8 +1,8 @@
 """CaptureSession — thin wrapper over Playwright + CDP that maps browser events to DTOs.
 
 Primary signal is the backend response status (reliable); CDP ``initiator.stack`` is a
-best-effort front-end enrichment (⚠️ unreliable on minified bundles without source maps —
-see mini-plat §Gotchas), so a missing stack never fails a capture.
+best-effort front-end enrichment (⚠️ unreliable on minified bundles without source maps),
+so a missing stack never fails a capture.
 """
 
 from __future__ import annotations
