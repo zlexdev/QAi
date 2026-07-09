@@ -1,15 +1,22 @@
+<div align="center">
+
 # QAi
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
+<sub>Autonomous web-app security scanner that points at the exact line of code where the bug lives</sub>
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](pyproject.toml)
 [![MCP](https://img.shields.io/badge/MCP-server-6e56cf)](#deploy--install-as-a-plugin-for-ai-agents-mcp)
 [![Playwright](https://img.shields.io/badge/browser-Playwright-2ead33)](https://playwright.dev)
 
-**Autonomous web-app security scanner that points at the exact line of code where
-the bug lives.** Give it a `URL` (+ optionally a repo, an OpenAPI/GraphQL spec, or
-a login), it fuzzes forms and API operations, replays IDOR/auth-bypass probes,
-and correlates every finding straight back to `file:line` — self-hosted, no
-manual test writing, **no AI/paid APIs required to run a scan**.
+</div>
+
+[Full documentation](docs/) · [AI-agent docs](docs/for_ai/) · [Architecture](mini-plat.md)
+
+Give it a `URL` (+ optionally a repo, an OpenAPI/GraphQL spec, or a login), it fuzzes
+forms and API operations, replays IDOR/auth-bypass probes, and correlates every
+finding straight back to `file:line` — self-hosted, no manual test writing,
+**no AI/paid APIs required to run a scan**.
 
 ```
 URL → page model / API spec → fuzz matrix + active checks → capture effects
@@ -17,43 +24,16 @@ URL → page model / API spec → fuzz matrix + active checks → capture effect
 to file:line → report (JSON / HTML / MCP)
 ```
 
-## Why qai
-
-| | qai | Burp Suite / ZAP | AI pentest SaaS |
-|---|---|---|---|
-| Self-hosted, no account | ✅ | ✅ (ZAP) | ❌ usually cloud-only |
-| No AI / paid API calls to run | ✅ | ✅ | ❌ |
-| Bug → exact `file:line` in your repo | ✅ | ❌ | rarely |
-| Native MCP server (agent-drivable) | ✅ | ❌ | varies |
-| OpenAPI/GraphQL spec-driven scanning | ✅ | ✅ | ✅ |
-| Active checks (IDOR, auth-bypass) | ✅ | ✅ | ✅ |
-| Free & open source | ✅ | ZAP: ✅ / Burp: ❌ | ❌ |
-
-The file:line correlation and MCP-native design are the two things a general
-scanner doesn't do: an agent (Claude Code, Cursor, …) can run a scan *and* open
-the exact file the bug lives in, in the same session.
-
-## Contents
-
-- [Install](#install)
-- [Quick start](#try-it-against-the-bundled-demo-target)
-- [CLI features](#stability-parallel-tabs-direct-request-fuzzing-har)
-- [Use as a library](#use-as-a-library)
-- [MCP server for AI agents](#deploy--install-as-a-plugin-for-ai-agents-mcp)
-- [How it works](#how-it-works)
-- [Safety](#safety)
-
-## Install
+## Quickstart
 
 ```bash
 uv sync --extra dev --extra demo
 uv run playwright install chromium
 ```
 
-## Try it against the bundled demo target
-
-The demo target is a tiny FastAPI app with one signup form; its `name` field has an
-unguarded server-side length check that a fuzzer's overflow payload reliably trips.
+Try it against the bundled demo target — a tiny FastAPI app with one signup form
+whose `name` field has an unguarded server-side length check that a fuzzer's
+overflow payload reliably trips:
 
 ```bash
 uv run uvicorn qai.demo_target.app:app --port 8000 &
@@ -61,7 +41,32 @@ uv run qai http://127.0.0.1:8000 --repo qai/demo_target --html report.html
 ```
 
 Open `report.html` — a self-contained dark-themed report with a clickable
-`qai/demo_target/app.py:LINE` next to the finding.
+`qai/demo_target/app.py:LINE` next to the finding. See [docs/USAGE.md](docs/USAGE.md)
+for every CLI flag, library call, and MCP tool signature.
+
+## Why qai
+
+| | qai | Burp Suite / ZAP | AI pentest SaaS |
+|---|---|---|---|
+| Self-hosted, no account | yes | yes (ZAP) | no — usually cloud-only |
+| No AI / paid API calls to run | yes | yes | no |
+| Bug → exact `file:line` in your repo | yes | no | rarely |
+| Native MCP server (agent-drivable) | yes | no | varies |
+| OpenAPI/GraphQL spec-driven scanning | yes | yes | yes |
+| Active checks (IDOR, auth-bypass) | yes | yes | yes |
+| Free & open source | yes | ZAP: yes / Burp: no | no |
+
+The file:line correlation and MCP-native design are the two things a general
+scanner doesn't do: an agent (Claude Code, Cursor, …) can run a scan *and* open
+the exact file the bug lives in, in the same session.
+
+## Contents
+
+- [CLI features](#stability-parallel-tabs-direct-request-fuzzing-har)
+- [Use as a library](#use-as-a-library)
+- [MCP server for AI agents](#deploy--install-as-a-plugin-for-ai-agents-mcp)
+- [How it works](#how-it-works)
+- [Safety](#safety)
 
 ## Stability, parallel tabs, direct-request fuzzing, HAR
 
@@ -383,8 +388,28 @@ honestly-empty result, not a crash or a bypass).
 - [docs/USAGE.md](docs/USAGE.md) — full CLI/library/MCP reference, troubleshooting, safety model
 - [docs/PLUGINS.md](docs/PLUGINS.md) — writing a check plugin (passive or active)
 - [docs/REPORTS.md](docs/REPORTS.md) — report formats (JSON/HTML/Markdown) and auto-save
+- [docs/for_ai/](docs/for_ai/) — condensed package map for an AI coding agent working in this repo
 - [mini-plat.md](mini-plat.md) — the full architecture this project instantiates
+
+## Contributing
+
+```bash
+git clone https://github.com/zlexdev/QAi.git && cd QAi
+uv sync --extra dev --extra demo
+uv run playwright install chromium
+uv run pytest
+uv run ruff check . && uv run mypy qai
+```
+
+PRs go against `master`; CI expectation is ruff + mypy (`strict`) + pytest all green.
+New engine-level types go in `qai/engine/contracts.py` as frozen Pydantic models — no
+raw `dict`/`tuple` crossing a layer boundary. Sync the relevant `_MODULE_AUTO.md` after
+touching a package (see [docs/for_ai/](docs/for_ai/) for the doc map).
+
+## Authors
+
+- Asmin963 — creator & maintainer ([@Asmin963](https://github.com/Asmin963))
 
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 Asmin963
