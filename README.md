@@ -434,6 +434,12 @@ extra, provisions a `qai-api` systemd service, and fronts it with nginx + a
 Let's Encrypt cert via certbot. `bash scripts/install.sh --dry-run` prints every
 step without touching the host.
 
+On a shared host, cap the service's memory so one heavy scan (Chromium) can't
+starve sibling processes: `QAI_MEMORY_MAX=512M bash scripts/install.sh` (default
+`512M`, cached in `~/.qai.conf` like the domain/port/API key — the systemd unit
+gets `MemoryMax`/`MemorySwapMax=0`, so a scan gets OOM-killed by its own cgroup
+instead of taking the host down).
+
 ## How it works
 
 | Layer | What it does | Built on |
