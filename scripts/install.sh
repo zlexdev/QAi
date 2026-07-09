@@ -60,10 +60,12 @@ if [ -z "${QAI_API_KEY:-}" ]; then
   QAI_API_KEY="$(run bash -c "openssl rand -hex 32" || echo "changeme-$(date +%s)")"
   log_warn "generated a new QAI_API_KEY — save it, it will not be printed again after this run"
 fi
+QAI_MEMORY_MAX="${QAI_MEMORY_MAX:-512M}"
 {
   echo "QAI_DOMAIN=${QAI_DOMAIN}"
   echo "QAI_PORT=${QAI_PORT}"
   echo "QAI_API_KEY=${QAI_API_KEY}"
+  echo "QAI_MEMORY_MAX=${QAI_MEMORY_MAX}"
 } > "$CONF_FILE"
 log_ok "config cached at $CONF_FILE"
 
@@ -90,6 +92,7 @@ sed \
   -e "s#{{SERVICE_USER}}#${SERVICE_USER}#g" \
   -e "s#{{APP_DIR}}#${APP_DIR}#g" \
   -e "s#{{UV_BIN}}#${UV_BIN}#g" \
+  -e "s#{{MEMORY_MAX}}#${QAI_MEMORY_MAX}#g" \
   "$APP_DIR/scripts/qai-api.service.template" > /tmp/qai-api.service
 run sudo cp /tmp/qai-api.service "$UNIT_PATH"
 run sudo systemctl daemon-reload
