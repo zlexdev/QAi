@@ -1,22 +1,25 @@
-<div align="center">
+<p align="center">
 
 # QAi
 
-<sub>Autonomous web-app security scanner that points at the exact line of code where the bug lives</sub>
+<strong>Autonomous web-app security scanner that points at the exact line of code where the bug lives</strong>
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](pyproject.toml)
-[![MCP](https://img.shields.io/badge/MCP-server-6e56cf)](#deploy--install-as-a-plugin-for-ai-agents-mcp)
-[![Playwright](https://img.shields.io/badge/browser-Playwright-2ead33)](https://playwright.dev)
+</p>
 
-</div>
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="License"></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.12%2B-blue?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.12+"></a>
+  <a href="#deploy--install-as-a-plugin-for-ai-agents-mcp"><img src="https://img.shields.io/badge/MCP-server-6e56cf?style=for-the-badge" alt="MCP server"></a>
+  <a href="https://playwright.dev"><img src="https://img.shields.io/badge/browser-Playwright-2ead33?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright"></a>
+</p>
+
+**QAi** is an autonomous web-app security scanner. Give it a `URL` (+ optionally a
+repo, an OpenAPI/GraphQL spec, or a login), it fuzzes forms and API operations,
+replays IDOR/auth-bypass probes, and correlates every finding straight back to
+`file:line` — self-hosted, no manual test writing, **no AI/paid APIs required to
+run a scan**.
 
 [Full documentation](docs/) · [AI-agent docs](docs/for_ai/)
-
-Give it a `URL` (+ optionally a repo, an OpenAPI/GraphQL spec, or a login), it fuzzes
-forms and API operations, replays IDOR/auth-bypass probes, and correlates every
-finding straight back to `file:line` — self-hosted, no manual test writing,
-**no AI/paid APIs required to run a scan**.
 
 ```
 URL → page model / API spec → fuzz matrix + active checks → capture effects
@@ -405,9 +408,11 @@ New engine-level types go in `qai/engine/contracts.py` as frozen Pydantic models
 raw `dict`/`tuple` crossing a layer boundary. Sync the relevant `_MODULE_AUTO.md` after
 touching a package (see [docs/for_ai/](docs/for_ai/) for the doc map).
 
-## Authors
+## Community
 
-- Asmin963 — creator & maintainer ([@Asmin963](https://github.com/Asmin963))
+Use [issues](https://github.com/zlexdev/QAi/issues) for bugs and feature requests.
+
+<a href="https://github.com/Asmin963"><img src="https://github.com/Asmin963.png" width="48" height="48" style="border-radius:50%" alt="Asmin963"></a>
 
 ## License
 
