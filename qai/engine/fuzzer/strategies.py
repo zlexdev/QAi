@@ -7,6 +7,7 @@ no edits to the generator. Each strategy turns a field's constraints into a matr
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 
@@ -57,6 +58,9 @@ _MALICIOUS = [
 # Mathematical double-struck X, emoji, a right-to-left override char, and a BOM —
 # the unicode edge cases a naive byte-length or ASCII-only validator chokes on.
 _UNICODE = "\U0001d54f\U0001f525\U0001f4a5‮abc﻿"
+# Candidates for _pattern_violation, cheapest/most-likely-to-fail first — each is only
+# used if it actually fails re.fullmatch against the field's real pattern (never a guess).
+_PATTERN_VIOLATION_CANDIDATES = ("", " ", "\x00", "!!!invalid!!!", _UNICODE, "A" * 5000)
 
 _REGISTRY: dict[FieldKind, FieldFuzzStrategy] = {}
 
@@ -78,6 +82,28 @@ class FieldFuzzStrategy(ABC):
             FuzzCase(value=v, intent=FuzzIntent.MALICIOUS, expect=ExpectedOutcome.REJECT_GRACEFULLY)
             for v in _MALICIOUS
         ]
+
+    @staticmethod
+    def _pattern_violation(c: FieldConstraints) -> list[FuzzCase]:
+        """Negative-testing case (idea ported from Schemathesis, MIT — see README "How
+        it works"): find a value that provably fails the field's JSON-schema `pattern`
+        and assert the API rejects it, instead of only testing pattern-conforming input."""
+        if not c.pattern:
+            return []
+        try:
+            regex = re.compile(c.pattern)
+        except re.error:
+            return []
+        for candidate in _PATTERN_VIOLATION_CANDIDATES:
+            if not regex.fullmatch(candidate):
+                return [
+                    FuzzCase(
+                        value=candidate,
+                        intent=FuzzIntent.SCHEMA_VIOLATION,
+                        expect=ExpectedOutcome.REJECT_GRACEFULLY,
+                    )
+                ]
+        return []
 
 
 def register(
@@ -116,6 +142,7 @@ class TextStrategy(FieldFuzzStrategy):
             FuzzCase(value=_UNICODE, intent=FuzzIntent.UNICODE, expect=ExpectedOutcome.EITHER)
         )
         cases += self._malicious()
+        cases += self._pattern_violation(c)
         return cases
 
 
@@ -170,6 +197,7 @@ class NumberStrategy(FieldFuzzStrategy):
             FuzzCase(value="0x2A", intent=FuzzIntent.MALICIOUS, expect=ExpectedOutcome.REJECT_GRACEFULLY),
             FuzzCase(value="1e5", intent=FuzzIntent.MALICIOUS, expect=ExpectedOutcome.EITHER),
         ]
+        cases += self._pattern_violation(c)
         return cases
 
 
@@ -189,6 +217,7 @@ class EmailStrategy(FieldFuzzStrategy):
         ]
         cases += self._maybe_empty(field.constraints)
         cases += self._malicious()
+        cases += self._pattern_violation(field.constraints)
         return cases
 
 
@@ -223,7 +252,7 @@ class SelectStrategy(FieldFuzzStrategy):
             cases.append(FuzzCase(value=opts[0], intent=FuzzIntent.VALID, expect=ExpectedOutcome.ACCEPT))
         cases.append(
             FuzzCase(
-                value="__not_an_option__", intent=FuzzIntent.MALICIOUS,
+                value="__not_an_option__", intent=FuzzIntent.SCHEMA_VIOLATION,
                 expect=ExpectedOutcome.REJECT_GRACEFULLY
             )
         )

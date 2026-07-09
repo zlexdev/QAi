@@ -383,6 +383,14 @@ stages (this is the sequence a Claude Code session actually ran):
 Everything crosses layer boundaries as frozen Pydantic DTOs (`qai/engine/contracts.py`) —
 no raw dicts between layers.
 
+`engine/fuzzer/strategies.py`'s pattern-violation case (`FuzzIntent.SCHEMA_VIOLATION` —
+find a value that provably fails a field's JSON-schema `pattern`, then assert the API
+rejects it) ports the "negative testing" idea from
+[Schemathesis](https://github.com/schemathesis/schemathesis) (MIT) — same concept
+(prove a value violates the schema, expect a graceful rejection), implemented here
+with a stdlib-only `re`-verified heuristic instead of Schemathesis's
+Hypothesis-driven schema negation.
+
 ## Safety
 
 Only run against **staging**, or your own targets — the fuzzer submits forms with

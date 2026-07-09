@@ -78,6 +78,9 @@ class FuzzIntent(StrEnum):
     OVERFLOW = "overflow"
     MALICIOUS = "malicious"
     UNICODE = "unicode"
+    # A value that provably violates a JSON-schema constraint (pattern/enum) on the
+    # field — negative-testing idea ported from Schemathesis (see README "How it works").
+    SCHEMA_VIOLATION = "schema_violation"
 
 
 class ExpectedOutcome(StrEnum):
