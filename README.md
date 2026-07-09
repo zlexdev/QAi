@@ -10,6 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="License"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.12%2B-blue?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.12+"></a>
   <a href="#deploy--install-as-a-plugin-for-ai-agents-mcp"><img src="https://img.shields.io/badge/MCP-server-6e56cf?style=for-the-badge" alt="MCP server"></a>
+  <a href="#deploy--remote-fastapi-service"><img src="https://img.shields.io/badge/REST-API-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="REST API"></a>
   <a href="https://playwright.dev"><img src="https://img.shields.io/badge/browser-Playwright-2ead33?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright"></a>
 </p>
 
@@ -80,6 +81,7 @@ session.
 - [CLI features](#stability-parallel-tabs-direct-request-fuzzing-har)
 - [Use as a library](#use-as-a-library)
 - [MCP server for AI agents](#deploy--install-as-a-plugin-for-ai-agents-mcp)
+- [Remote FastAPI service](#deploy--remote-fastapi-service)
 - [How it works](#how-it-works)
 - [Safety](#safety)
 
@@ -368,6 +370,70 @@ stages (this is the sequence a Claude Code session actually ran):
 // -> cursor advances, that stage's status becomes "skipped", no side effects run
 ```
 
+## Deploy — remote FastAPI service
+
+For driving qai over the network instead of a local MCP subprocess — put it on a
+server and hit it with `curl`/any HTTP client. Same underlying engine as the MCP
+tools above (`run_scan`, `run_crawl`, `run_api_scan`, `record_login`, the
+pipeline session store); this is just a second transport, not a second engine.
+
+### Run it locally
+
+```bash
+uv sync --extra api
+export QAI_API_KEY=$(openssl rand -hex 32)
+uv run qai-api          # listens on 0.0.0.0:8000
+```
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/scan \
+  -H "X-API-Key: $QAI_API_KEY" -H "Content-Type: application/json" \
+  -d '{"url": "http://127.0.0.1:8000", "repo_path": "qai/demo_target"}'
+# -> {"job_id": "...", "status": "pending"}
+curl http://127.0.0.1:8000/v1/jobs/<job_id> -H "X-API-Key: $QAI_API_KEY"
+# -> {"job_id": "...", "status": "done", "result": { ...RunReport... }}
+```
+
+Scans/crawls/API-scans are long-running, so every submit endpoint returns `202` +
+a `job_id` immediately; poll `GET /v1/jobs/{id}` for the result. Pipeline sessions
+(`/v1/pipeline/*`) mirror the MCP `qa_pipeline_*` tools one-to-one and don't need
+polling — each call returns the current state directly.
+
+| Endpoint | Mirrors MCP tool |
+|---|---|
+| `POST /v1/scan` | `qa_scan` |
+| `POST /v1/crawl` | `qa_crawl` |
+| `POST /v1/api-scan` | `qa_api_scan` |
+| `POST /v1/login-record` | `qa_login_record` |
+| `GET /v1/jobs/{id}` | — poll result of any of the above |
+| `POST /v1/pipeline/start` | `qa_pipeline_start` |
+| `POST /v1/pipeline/{id}/step` | `qa_pipeline_step` |
+| `GET /v1/pipeline/{id}/report` | `qa_pipeline_report` |
+| `DELETE /v1/pipeline/{id}` | `qa_pipeline_abort` |
+| `GET /healthz` | — unauthenticated liveness check |
+
+Every route except `/healthz` requires an `X-API-Key` header matching `QAI_API_KEY`
+(constant-time compared). Run single-worker (`qai-api` always does) — job/session
+state is in-process, so a multi-worker run would silently split jobs across
+processes.
+
+Interactive API reference (built from the live OpenAPI schema, [Scalar](https://scalar.com)):
+open `http://127.0.0.1:8000/scalar` (or `https://<your-domain>/scalar` once deployed).
+
+### Deploy to a server with a domain + TLS
+
+```bash
+git clone https://github.com/zlexdev/QAi.git && cd QAi
+bash scripts/install.sh
+```
+
+Prompts once for a domain (must already point an A/AAAA record at the host) and
+generates/caches an API key in `~/.qai.conf`; from there it's idempotent — re-run
+after a `git pull` to pick up an update. It installs system deps, syncs the `api`
+extra, provisions a `qai-api` systemd service, and fronts it with nginx + a
+Let's Encrypt cert via certbot. `bash scripts/install.sh --dry-run` prints every
+step without touching the host.
+
 ## How it works
 
 | Layer | What it does | Built on |
@@ -409,7 +475,7 @@ honestly-empty result, not a crash or a bypass).
 
 ```bash
 git clone https://github.com/zlexdev/QAi.git && cd QAi
-uv sync --extra dev --extra demo
+uv sync --extra dev --extra demo --extra api
 uv run playwright install chromium
 uv run pytest
 uv run ruff check . && uv run mypy qai
