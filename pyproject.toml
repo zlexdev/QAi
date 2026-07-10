@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 mcp = ["mcp>=1.2"]
 demo = ["fastapi>=0.115", "uvicorn[standard]>=0.32"]
+api = ["fastapi>=0.115", "uvicorn[standard]>=0.32", "pydantic-settings>=2.6", "scalar-fastapi>=1.0"]
 apispec = ["pyyaml>=6.0"]
 dev = [
     "pytest>=8.3",
@@ -29,6 +30,7 @@ dev = [
 [project.scripts]
 qai = "qai.cli:main"
 qai-mcp = "qai.mcp_server:main"
+qai-api = "qai.api.app:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -56,6 +58,9 @@ select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
 # FastAPI's Body(...)/Form(...)/Cookie(...) default-arg pattern is the framework's own
 # idiom, not a real "function call in a default" hazard.
 "qai/demo_target/app.py" = ["B008"]
+# FastAPI's Depends(...) default-arg pattern is the framework's own DI idiom.
+"qai/api/auth.py" = ["B008"]
+"qai/api/routes.py" = ["B008"]
 
 [tool.mypy]
 python_version = "3.12"

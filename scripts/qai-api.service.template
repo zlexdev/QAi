@@ -1,0 +1,19 @@
+[Unit]
+Description=QAi remote scan API
+After=network.target
+
+[Service]
+Type=simple
+User={{SERVICE_USER}}
+WorkingDirectory={{APP_DIR}}
+EnvironmentFile={{APP_DIR}}/.env
+ExecStart={{UV_BIN}} run --project {{APP_DIR}} qai-api
+Restart=on-failure
+RestartSec=3
+# Caps a scan's Chromium process on a shared box — a stray heavy scan degrades
+# qai-api itself instead of OOM-killing sibling services on the host.
+MemoryMax={{MEMORY_MAX}}
+MemorySwapMax=0
+
+[Install]
+WantedBy=multi-user.target

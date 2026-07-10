@@ -10,6 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="License"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.12%2B-blue?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.12+"></a>
   <a href="#deploy--install-as-a-plugin-for-ai-agents-mcp"><img src="https://img.shields.io/badge/MCP-server-6e56cf?style=for-the-badge" alt="MCP server"></a>
+  <a href="#deploy--remote-fastapi-service"><img src="https://img.shields.io/badge/REST-API-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="REST API"></a>
   <a href="https://playwright.dev"><img src="https://img.shields.io/badge/browser-Playwright-2ead33?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright"></a>
 </p>
 
@@ -80,6 +81,7 @@ session.
 - [CLI features](#stability-parallel-tabs-direct-request-fuzzing-har)
 - [Use as a library](#use-as-a-library)
 - [MCP server for AI agents](#deploy--install-as-a-plugin-for-ai-agents-mcp)
+- [Remote FastAPI service](#deploy--remote-fastapi-service)
 - [How it works](#how-it-works)
 - [Safety](#safety)
 
@@ -368,6 +370,130 @@ stages (this is the sequence a Claude Code session actually ran):
 // -> cursor advances, that stage's status becomes "skipped", no side effects run
 ```
 
+## Deploy — remote FastAPI service
+
+For driving qai over the network instead of a local MCP subprocess — put it on a
+server and hit it with `curl`/any HTTP client. Same underlying engine as the MCP
+tools above (`run_scan`, `run_crawl`, `run_api_scan`, `record_login`, the
+pipeline session store); this is just a second transport, not a second engine.
+
+### Run it locally
+
+```bash
+uv sync --extra api
+export QAI_API_KEY=$(openssl rand -hex 32)
+uv run qai-api          # listens on 0.0.0.0:8000
+```
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/scan \
+  -H "X-API-Key: $QAI_API_KEY" -H "Content-Type: application/json" \
+  -d '{"url": "http://127.0.0.1:8000", "repo_path": "qai/demo_target"}'
+# -> {"job_id": "...", "status": "pending"}
+curl http://127.0.0.1:8000/v1/jobs/<job_id> -H "X-API-Key: $QAI_API_KEY"
+# -> {"job_id": "...", "status": "done", "result": { ...RunReport... }}
+```
+
+Scans/crawls/API-scans are long-running, so every submit endpoint returns `202` +
+a `job_id` immediately; poll `GET /v1/jobs/{id}` for the result. Pipeline sessions
+(`/v1/pipeline/*`) mirror the MCP `qa_pipeline_*` tools one-to-one and don't need
+polling — each call returns the current state directly.
+
+| Endpoint | Mirrors MCP tool |
+|---|---|
+| `POST /v1/scan` | `qa_scan` |
+| `POST /v1/crawl` | `qa_crawl` |
+| `POST /v1/api-scan` | `qa_api_scan` |
+| `POST /v1/login-record` | `qa_login_record` |
+| `GET /v1/jobs/{id}` | — poll result of any of the above |
+| `POST /v1/pipeline/start` | `qa_pipeline_start` |
+| `POST /v1/pipeline/{id}/step` | `qa_pipeline_step` |
+| `GET /v1/pipeline/{id}/report` | `qa_pipeline_report` |
+| `DELETE /v1/pipeline/{id}` | `qa_pipeline_abort` |
+| `GET /healthz` | — unauthenticated liveness check |
+
+Every route except `/healthz` requires an `X-API-Key` header matching `QAI_API_KEY`
+(constant-time compared). Run single-worker (`qai-api` always does) — job/session
+state is in-process, so a multi-worker run would silently split jobs across
+processes.
+
+Interactive API reference (built from the live OpenAPI schema, [Scalar](https://scalar.com)):
+open `http://127.0.0.1:8000/scalar` (or `https://<your-domain>/scalar` once deployed).
+
+### REST examples
+
+Same demo target as the MCP examples above
+(`uv run uvicorn qai.demo_target.app:app --port 8000`); `$KEY` is `$QAI_API_KEY`.
+
+**Crawl** — BFS-discover pages, fuzz every form found:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/crawl -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"url": "http://127.0.0.1:8000", "repo_path": "qai/demo_target", "max_depth": 2, "max_actions": 50}'
+# -> {"job_id": "...", "status": "pending"}  — poll GET /v1/jobs/{id} for the CrawlReport
+```
+
+**Spec-driven API scan** — fuzz an OpenAPI/GraphQL spec straight over HTTP, no DOM:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/api-scan -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d "{\"spec\": $(cat qai/demo_target/openapi.json | jq -Rs .), \"base_url\": \"http://127.0.0.1:8000\", \"own_target\": true}"
+```
+
+**Record a login once, replay it on every future scan**:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/login-record -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"login_url": "http://127.0.0.1:8000/login", "username": "admin", "password": "secret"}'
+# -> {"job_id": "...", "status": "pending"}
+curl http://127.0.0.1:8000/v1/jobs/<job_id> -H "X-API-Key: $KEY"
+# -> result: {"macro": {...LoginMacro...}, "auth_result": {"authenticated": true, "cookies": [...]}}
+# save `macro` from the result, then pass it as "login_macro" on a later /v1/scan or /v1/crawl call
+```
+
+**Driven pipeline** — step-by-step, inspecting output and injecting context between stages:
+
+```bash
+SID=$(curl -s -X POST http://127.0.0.1:8000/v1/pipeline/start -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"url": "http://127.0.0.1:8000", "repo_path": "qai/demo_target"}' | jq -r .session_id)
+
+curl -X POST http://127.0.0.1:8000/v1/pipeline/$SID/step -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d '{}'
+# -> runs "recon"; steps[0].status becomes "done"
+
+curl -X POST http://127.0.0.1:8000/v1/pipeline/$SID/step -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"inject": {"notes": "focus on headers"}}'
+# -> runs "security_headers"; last_step_output carries its findings
+
+curl http://127.0.0.1:8000/v1/pipeline/$SID/report -H "X-API-Key: $KEY"
+# -> RunReport-shaped projection of the session so far, doesn't tear it down
+
+curl -X DELETE http://127.0.0.1:8000/v1/pipeline/$SID -H "X-API-Key: $KEY"
+# -> {"ok": true}, frees the browser and deletes the session
+```
+
+### Deploy to a server with a domain + TLS
+
+```bash
+git clone https://github.com/zlexdev/QAi.git && cd QAi
+bash scripts/install.sh
+```
+
+Prompts once for a domain (must already point an A/AAAA record at the host) and
+generates/caches an API key in `~/.qai.conf`; from there it's idempotent — re-run
+after a `git pull` to pick up an update. It installs system deps, syncs the `api`
+extra, provisions a `qai-api` systemd service, and fronts it with nginx + a
+Let's Encrypt cert via certbot. `bash scripts/install.sh --dry-run` prints every
+step without touching the host.
+
+On a shared host, cap the service's memory so one heavy scan (Chromium) can't
+starve sibling processes: `QAI_MEMORY_MAX=512M bash scripts/install.sh` (default
+`512M`, cached in `~/.qai.conf` like the domain/port/API key — the systemd unit
+gets `MemoryMax`/`MemorySwapMax=0`, so a scan gets OOM-killed by its own cgroup
+instead of taking the host down).
+
+Full install-phase breakdown, config reference, operating/update commands,
+memory-cap sizing guidance, and TLS/DNS troubleshooting: [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ## How it works
 
 | Layer | What it does | Built on |
@@ -409,6 +535,7 @@ honestly-empty result, not a crash or a bypass).
 ## See also
 
 - [docs/USAGE.md](docs/USAGE.md) — full CLI/library/MCP reference, troubleshooting, safety model
+- [docs/DEPLOY.md](docs/DEPLOY.md) — remote FastAPI service deploy guide (install phases, config reference, shared-host memory sizing, TLS troubleshooting)
 - [docs/PLUGINS.md](docs/PLUGINS.md) — writing a check plugin (passive or active)
 - [docs/REPORTS.md](docs/REPORTS.md) — report formats (JSON/HTML/Markdown) and auto-save
 - [docs/for_ai/](docs/for_ai/) — condensed package map for an AI coding agent working in this repo
@@ -417,7 +544,7 @@ honestly-empty result, not a crash or a bypass).
 
 ```bash
 git clone https://github.com/zlexdev/QAi.git && cd QAi
-uv sync --extra dev --extra demo
+uv sync --extra dev --extra demo --extra api
 uv run playwright install chromium
 uv run pytest
 uv run ruff check . && uv run mypy qai
