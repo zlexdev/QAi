@@ -420,6 +420,57 @@ processes.
 Interactive API reference (built from the live OpenAPI schema, [Scalar](https://scalar.com)):
 open `http://127.0.0.1:8000/scalar` (or `https://<your-domain>/scalar` once deployed).
 
+### REST examples
+
+Same demo target as the MCP examples above
+(`uv run uvicorn qai.demo_target.app:app --port 8000`); `$KEY` is `$QAI_API_KEY`.
+
+**Crawl** — BFS-discover pages, fuzz every form found:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/crawl -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"url": "http://127.0.0.1:8000", "repo_path": "qai/demo_target", "max_depth": 2, "max_actions": 50}'
+# -> {"job_id": "...", "status": "pending"}  — poll GET /v1/jobs/{id} for the CrawlReport
+```
+
+**Spec-driven API scan** — fuzz an OpenAPI/GraphQL spec straight over HTTP, no DOM:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/api-scan -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d "{\"spec\": $(cat qai/demo_target/openapi.json | jq -Rs .), \"base_url\": \"http://127.0.0.1:8000\", \"own_target\": true}"
+```
+
+**Record a login once, replay it on every future scan**:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/login-record -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"login_url": "http://127.0.0.1:8000/login", "username": "admin", "password": "secret"}'
+# -> {"job_id": "...", "status": "pending"}
+curl http://127.0.0.1:8000/v1/jobs/<job_id> -H "X-API-Key: $KEY"
+# -> result: {"macro": {...LoginMacro...}, "auth_result": {"authenticated": true, "cookies": [...]}}
+# save `macro` from the result, then pass it as "login_macro" on a later /v1/scan or /v1/crawl call
+```
+
+**Driven pipeline** — step-by-step, inspecting output and injecting context between stages:
+
+```bash
+SID=$(curl -s -X POST http://127.0.0.1:8000/v1/pipeline/start -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"url": "http://127.0.0.1:8000", "repo_path": "qai/demo_target"}' | jq -r .session_id)
+
+curl -X POST http://127.0.0.1:8000/v1/pipeline/$SID/step -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d '{}'
+# -> runs "recon"; steps[0].status becomes "done"
+
+curl -X POST http://127.0.0.1:8000/v1/pipeline/$SID/step -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"inject": {"notes": "focus on headers"}}'
+# -> runs "security_headers"; last_step_output carries its findings
+
+curl http://127.0.0.1:8000/v1/pipeline/$SID/report -H "X-API-Key: $KEY"
+# -> RunReport-shaped projection of the session so far, doesn't tear it down
+
+curl -X DELETE http://127.0.0.1:8000/v1/pipeline/$SID -H "X-API-Key: $KEY"
+# -> {"ok": true}, frees the browser and deletes the session
+```
+
 ### Deploy to a server with a domain + TLS
 
 ```bash
@@ -439,6 +490,9 @@ starve sibling processes: `QAI_MEMORY_MAX=512M bash scripts/install.sh` (default
 `512M`, cached in `~/.qai.conf` like the domain/port/API key — the systemd unit
 gets `MemoryMax`/`MemorySwapMax=0`, so a scan gets OOM-killed by its own cgroup
 instead of taking the host down).
+
+Full install-phase breakdown, config reference, operating/update commands,
+memory-cap sizing guidance, and TLS/DNS troubleshooting: [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## How it works
 
@@ -473,6 +527,7 @@ honestly-empty result, not a crash or a bypass).
 ## See also
 
 - [docs/USAGE.md](docs/USAGE.md) — full CLI/library/MCP reference, troubleshooting, safety model
+- [docs/DEPLOY.md](docs/DEPLOY.md) — remote FastAPI service deploy guide (install phases, config reference, shared-host memory sizing, TLS troubleshooting)
 - [docs/PLUGINS.md](docs/PLUGINS.md) — writing a check plugin (passive or active)
 - [docs/REPORTS.md](docs/REPORTS.md) — report formats (JSON/HTML/Markdown) and auto-save
 - [docs/for_ai/](docs/for_ai/) — condensed package map for an AI coding agent working in this repo
