@@ -32,7 +32,23 @@ URL → page model / API spec → fuzz matrix + active checks → capture effect
 to file:line → report (JSON / HTML / MCP)
 ```
 
-## Quickstart
+## Install
+
+```bash
+uv tool install qai-web       # or: pip install qai-web
+qai --help
+```
+
+The distribution is **`qai-web`** (the name `qai` was taken on PyPI). Everything else
+is still `qai` — the command, the import package, the MCP server:
+
+```python
+from qai.engine.runner import run_scan
+```
+
+Playwright needs its browser once per machine: `playwright install chromium`.
+
+## Quickstart from source
 
 ```bash
 uv sync --extra dev --extra demo

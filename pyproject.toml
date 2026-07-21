@@ -1,6 +1,7 @@
 [project]
-name = "qai"
-version = "0.2.0"
+# Distribution name on PyPI; the import package stays `qai` (see tool.hatch below).
+name = "qai-web"
+version = "0.2.1"
 description = "Autonomous web-form fuzzer that finds a bug and points at the line of code where it lives — self-hosted, no AI/paid APIs."
 readme = "README.md"
 requires-python = ">=3.12"

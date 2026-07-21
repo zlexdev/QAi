@@ -44,13 +44,19 @@ browser test lands in the right job without anyone remembering to label it.
 
 Tag a version and push the tag:
 
+Bump `version` in `pyproject.toml`, then tag it:
+
 ```bash
-git tag v0.2.0 && git push origin v0.2.0
+git tag v0.2.1 && git push origin v0.2.1
 ```
 
-The release workflow re-runs the full gate against the tagged commit, builds the
-wheel and sdist, and attaches them to a generated GitHub Release.
+`publish.yml` re-runs the full gate against the tagged commit, builds the wheel and
+sdist, publishes to PyPI, and only then creates the GitHub Release — a release
+announcing a version PyPI rejected would advertise an install command that fails.
 
-Publishing to PyPI is not wired. It needs a one-time pending publisher registered on
-pypi.org (project name, owner, repo, workflow file, environment) before the first
-upload can work — add the publish job only once that exists.
+PyPI auth is OIDC trusted publishing: no token is stored anywhere. It is bound to the
+workflow **filename**, so renaming `publish.yml` breaks every publish until the
+publisher is updated on pypi.org to match.
+
+A published version is permanent — PyPI does not accept a re-upload of the same
+version number. Bump rather than retry.

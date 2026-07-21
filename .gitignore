@@ -10,3 +10,4 @@ qai-reports/
 *.har
 *.log
 .plans/
+dist/

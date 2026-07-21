@@ -12,7 +12,8 @@ from qai.api.settings import Settings
 from qai.engine.logging import configure_logging
 
 try:
-    _VERSION = version("qai")
+    # Distribution name, not the import package — those differ here (qai-web / qai).
+    _VERSION = version("qai-web")
 except PackageNotFoundError:  # source checkout with no install — dev only, never shipped
     _VERSION = "0.0.0+dev"
 
