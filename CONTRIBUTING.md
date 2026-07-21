@@ -35,6 +35,9 @@ git tag v0.2.0 && git push origin v0.2.0
 The release workflow re-runs the full gate against the tagged commit, builds the
 wheel and sdist, and attaches them to a generated GitHub Release.
 
+Every check above also runs on each pull request, so a fork's failing test or type
+error blocks the merge.
+
 Publishing to PyPI is not wired. It needs a one-time pending publisher registered on
 pypi.org (project name, owner, repo, workflow file, environment) before the first
 upload can work — add the publish job only once that exists.
