@@ -173,11 +173,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--screenshot", action="store_true",
-        help="Save a PNG of the recon page; path is printed and included in --json output"
+        help="Save a PNG of the recon page; with --crawl, saves one PNG per visited "
+        "page instead. Paths are printed and included in --json output"
     )
     parser.add_argument(
         "--screenshot-dir", default=None, metavar="DIR",
-        help="Directory the screenshot is saved under (default: qai-reports/screenshots)"
+        help="Directory screenshots are saved under (default: qai-reports/screenshots). "
+        "With --crawl each run gets its own <dir>/<run_id>/ subdirectory"
     )
     return parser
 
@@ -288,6 +290,8 @@ def main(argv: list[str] | None = None) -> int:
                     cookies=cookies,
                     login_macro=login_macro,
                     timeouts=timeouts,
+                    screenshot=args.screenshot,
+                    screenshot_dir=args.screenshot_dir,
                 )
             )
         else:
@@ -325,6 +329,10 @@ def main(argv: list[str] | None = None) -> int:
     screenshot_path = getattr(report, "screenshot_path", None)
     if screenshot_path:
         console.print(f"[dim]Screenshot saved: {screenshot_path}[/dim]")
+    screenshots = getattr(report, "screenshots", [])
+    if screenshots:
+        shot_dir = Path(screenshots[0].path).parent
+        console.print(f"[dim]{len(screenshots)} page screenshot(s) saved under {shot_dir}[/dim]")
 
     reporter = Reporter()
     reporter.print_table(report, console)

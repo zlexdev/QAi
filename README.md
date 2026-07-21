@@ -273,6 +273,21 @@ fuzz oracle and the header check in one pass:
 // -> Read that path directly (Claude Code, or any agent that can open images)
 ```
 
+**Screenshot every page of a full crawl** — one PNG per visited page, form-less pages
+included:
+
+```jsonc
+// call: qa_crawl(url="http://127.0.0.1:8000", screenshot=true, screenshot_dir="shots")
+{
+  "run_id": "849c2cf13a41",
+  "screenshots": [
+    { "url": "http://127.0.0.1:8000/",      "path": "shots/849c2cf13a41/001-root.png" },
+    { "url": "http://127.0.0.1:8000/login", "path": "shots/849c2cf13a41/002-login.png" }
+  ]
+}
+// -> ordinal-prefixed, so the files sort in visit order
+```
+
 **Active checks** — IDOR + auth-bypass replay, gated by `own_target` (never fire
 without it, see [Safety](#safety)):
 

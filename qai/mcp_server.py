@@ -289,6 +289,8 @@ async def qa_crawl(
     login_macro: dict[str, object] | None = None,
     nav_timeout_seconds: float | None = None,
     dom_stable_timeout_seconds: float | None = None,
+    screenshot: bool = False,
+    screenshot_dir: str | None = None,
 ) -> str:
     """Discover same-origin pages (BFS, budgeted) from ``url`` and fuzz every form found.
 
@@ -307,6 +309,13 @@ async def qa_crawl(
     See ``qa_scan`` for the ``own_target``/safe-mode rule, the ``cookies``/
     ``login_macro`` shape, and the ``nav_timeout_seconds``/``dom_stable_timeout_seconds``
     wait-budget overrides — all apply identically here, per discovered page.
+
+    Args:
+        screenshot: if True, saves a PNG of EVERY visited page (form-less pages
+            included) and returns the url->path pairs as the report's ``screenshots``
+            list — ``Read`` those paths directly to see what the crawler saw.
+        screenshot_dir: directory the PNGs are saved under (default
+            ``qai-reports/screenshots``); each run gets its own ``<dir>/<run_id>/``.
     """
     safe_mode = _resolve_safe_mode(url, own_target)
     budget = CrawlBudget(
@@ -330,6 +339,8 @@ async def qa_crawl(
             cookies=_parse_cookies(cookies),
             login_macro=_parse_login_macro(login_macro),
             timeouts=timeouts,
+            screenshot=screenshot,
+            screenshot_dir=screenshot_dir,
         )
     except QaiError as exc:
         return json.dumps({"error": str(exc), "error_type": type(exc).__name__})

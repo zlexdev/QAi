@@ -448,6 +448,8 @@ async def run_crawl(
     cookies: list[CookieSpec] | None = None,
     login_macro: LoginMacro | None = None,
     timeouts: TimeoutConfig | None = None,
+    screenshot: bool = False,
+    screenshot_dir: str | None = None,
 ) -> CrawlReport:
     """Phase 4: discover same-origin states reachable from ``url`` (BFS, budgeted),
     then run the Phase 0-3 fuzz pipeline against every discovered page that has a form.
@@ -457,12 +459,22 @@ async def run_crawl(
     skipped_destructive`` for what was skipped. ``safe_mode``/``direct_mode``/
     ``max_parallel``/``har_dir``/``cookies`` apply to each discovered page exactly as
     they do to a single ``run_scan`` call.
+
+    ``screenshot`` saves a PNG of EVERY visited state (form-less pages included, unlike
+    the fuzz phase) under ``screenshot_dir``; the url->path pairs come back as
+    ``CrawlReport.screenshots``. Best-effort per page — a failed shot is logged and
+    skipped, never fatal to the crawl.
     """
     root = validate_url(url)
     run_id = uuid.uuid4().hex[:12]
     started_at = datetime.now(UTC)
     active_budget = budget or CrawlBudget()
     cookies = await _resolve_cookies(headless, cookies, login_macro)
+
+    shot_dir: Path | None = None
+    if screenshot:
+        shot_dir = Path(screenshot_dir or "qai-reports/screenshots") / run_id
+        shot_dir.mkdir(parents=True, exist_ok=True)
 
     correlator: CodeCorrelator | None = None
     if repo_path:
@@ -481,7 +493,9 @@ async def run_crawl(
             cookies=cookies,
             timeouts=timeouts,
         ) as session:
-            explorer = Explorer(session, active_budget, allowlist=allowlist)
+            explorer = Explorer(
+                session, active_budget, allowlist=allowlist, screenshot_dir=shot_dir
+            )
             result = await explorer.crawl(root)
             deadline = explorer.deadline
 
@@ -551,6 +565,7 @@ async def run_crawl(
         skipped_destructive=result.skipped_destructive,
         budget_exhausted_by=result.budget_exhausted_by
         or (BudgetExhaustedBy.WALL_CLOCK if pages_not_fuzzed else None),
+        screenshots=result.screenshots,
     )
     _log.info(
         "crawl_complete",

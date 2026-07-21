@@ -328,6 +328,15 @@ class RunReport(BaseModel):
         return (self.finished_at - self.started_at).total_seconds()
 
 
+class PageScreenshot(BaseModel):
+    """A PNG saved for one crawled state. Recorded per *visited state*, not per page
+    with a form — a page with no form still gets a shot."""
+
+    model_config = _FROZEN
+    url: str
+    path: str
+
+
 class CookieSpec(BaseModel):
     """One cookie to inject into the browser context before any navigation — lets a
     scan/crawl authenticate against a target (and, via ``domain``, against a separate
@@ -410,6 +419,7 @@ class CrawlReport(BaseModel):
     pages_not_fuzzed: list[SkippedPage] = Field(default_factory=list)
     skipped_destructive: list[CrawlAction] = Field(default_factory=list)
     budget_exhausted_by: BudgetExhaustedBy | None = None
+    screenshots: list[PageScreenshot] = Field(default_factory=list)
 
     @property
     def findings(self) -> list[Finding]:

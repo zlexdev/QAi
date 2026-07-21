@@ -9,9 +9,11 @@ checkpoint+replay (a URL alone can't identify SPA in-memory state), and hard bud
 
 from __future__ import annotations
 
+import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from qai.engine.capture import CaptureSession
@@ -21,6 +23,7 @@ from qai.engine.contracts import (
     CrawlAction,
     CrawlBudget,
     PageModel,
+    PageScreenshot,
     SkippedPage,
     SkipReason,
     StateRef,
@@ -37,6 +40,9 @@ _UNKNOWN_TARGET = "(unknown — SPA action chain, not a direct link)"
 # shouldn't grow the frontier unbounded while max_actions still counts *visited*
 # pages one at a time.
 _FRONTIER_SAFETY_CAP = 2000
+_UNSAFE_FILENAME_RE = re.compile(r"[^a-z0-9]+")
+# Windows caps a path component at 255 chars; a long query string would blow past it.
+_SLUG_MAX = 60
 
 
 @dataclass(slots=True)
@@ -46,12 +52,20 @@ class ExplorerResult:
     skipped_destructive: list[CrawlAction] = field(default_factory=list)
     not_visited: list[SkippedPage] = field(default_factory=list)
     budget_exhausted_by: BudgetExhaustedBy | None = None
+    screenshots: list[PageScreenshot] = field(default_factory=list)
 
 
 def _target_of(path: list[CrawlAction]) -> str:
     if path and path[-1].kind is ActionKind.LINK and path[-1].href:
         return path[-1].href
     return _UNKNOWN_TARGET
+
+
+def _shot_name(index: int, url: str) -> str:
+    """Ordinal-prefixed so files sort in visit order; the slug is only a human hint —
+    two distinct URLs may slugify the same, hence the ordinal carries uniqueness."""
+    slug = _UNSAFE_FILENAME_RE.sub("-", urlsplit(url).path.lower()).strip("-")
+    return f"{index:03d}-{(slug or 'root')[:_SLUG_MAX]}.png"
 
 
 class Explorer:
@@ -63,10 +77,12 @@ class Explorer:
         budget: CrawlBudget,
         *,
         allowlist: frozenset[str] = frozenset(),
+        screenshot_dir: Path | None = None,
     ) -> None:
         self._session = session
         self._budget = budget
         self._allowlist = allowlist
+        self._screenshot_dir = screenshot_dir
         self._modeler = PageModeler()
         self._seen_hash_counts: dict[str, int] = {}
         self._template_counts: dict[str, int] = {}
@@ -123,6 +139,15 @@ class Explorer:
 
             page_model = await self._modeler.model(self._session.page)
             result.visited.append((state, page_model))
+            # Shot here, not in run_crawl's fuzz loop: this is the one point where every
+            # visited state is loaded and settled, including the form-less pages the
+            # fuzz loop skips entirely.
+            if self._screenshot_dir is not None:
+                shot = self._screenshot_dir / _shot_name(len(result.states), state.normalized_url)
+                if await self._session.screenshot(str(shot)):
+                    result.screenshots.append(
+                        PageScreenshot(url=state.normalized_url, path=str(shot))
+                    )
             _log.info(
                 "state_visited", url=state.normalized_url, depth=depth, forms=len(page_model.forms)
             )

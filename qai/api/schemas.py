@@ -67,6 +67,8 @@ class CrawlRequest(BaseModel):
     wall_clock_seconds: int = 300
     include_subdomains: bool = True
     allowed_domains: list[str] | None = None
+    screenshot: bool = False
+    screenshot_dir: str | None = None
     allow_destructive: bool | None = None
     parallel: int = 1
     own_target: bool = False

@@ -120,6 +120,8 @@ async def submit_crawl(req: CrawlRequest) -> JobAccepted:
             cookies=req.cookies,
             login_macro=req.login_macro,
             timeouts=timeouts,
+            screenshot=req.screenshot,
+            screenshot_dir=req.screenshot_dir,
         )
         return report.model_dump(mode="json")
 

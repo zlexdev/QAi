@@ -52,6 +52,8 @@ qai <url> [options]
 | `--wall-clock S` | `180` | Crawl: overall time budget in seconds |
 | `--allow-destructive SELECTOR` | none | Repeatable — allow clicking a specific destructive-looking selector during a crawl |
 | `--cookie DOMAIN:NAME=VALUE` | none | Repeatable — inject an auth cookie before any navigation, so a scan can reach pages behind a login wall. Each cookie's own domain decides which requests carry it, so a separate auth/SSO subdomain's cookie can be listed alongside the main target's: `--cookie .example.com:session=abc --cookie sso.example.com:token=xyz` |
+| `--screenshot` | off | Save a PNG of the page. Alone: the recon page. With `--crawl`: one PNG per visited page |
+| `--screenshot-dir DIR` | `qai-reports/screenshots` | Where the PNGs go. With `--crawl`, each run writes to its own `DIR/<run_id>/` |
 
 Exit code: `0` if no findings, `2` if findings exist, `1` on a `QaiError` (bad URL,
 missing repo path, capture failure after retry).
@@ -174,6 +176,31 @@ uv run qai https://staging.example.com --repo ~/code/example --i-own-this-target
   --crawl --max-depth 3 --max-actions 100 --wall-clock 300 --json crawl-report.json
 ```
 
+#### Screenshotting every page (`--crawl --screenshot`)
+
+Saves one PNG per **visited page** — including pages with no form, which the fuzz pass
+skips entirely. This is the full-run visual export: what the crawler actually saw.
+
+```bash
+uv run qai http://127.0.0.1:8000 --crawl --screenshot --screenshot-dir shots \
+  --max-depth 3 --max-actions 100 --json crawl-report.json
+```
+
+Files land in `shots/<run_id>/`, named `<ordinal>-<url-slug>.png` so they sort in visit
+order. Each run gets its own subdirectory, so repeat crawls never overwrite each other.
+
+The report's `screenshots` array carries the url → path pairs:
+
+```json
+"screenshots": [
+  {"url": "http://127.0.0.1:8000/", "path": "shots/849c2cf13a41/001-root.png"},
+  {"url": "http://127.0.0.1:8000/login", "path": "shots/849c2cf13a41/002-login.png"}
+]
+```
+
+A shot that fails is logged and skipped — never fatal to the crawl. So `screenshots`
+can be shorter than `states_visited`; trust the array, not the page count.
+
 ### HAR recording (`--har DIR`)
 
 One `.har` file per tab, named `<run_id>-tab-<i>.har`. Load it into any HAR viewer
@@ -268,8 +295,11 @@ Nine tools:
   cookies first) — `None` (default) is a no-op.
 - **`qa_scan_html(url, repo_path=None, out_path="qai-report.html", headless=True, parallel=1, own_target=False, login_macro=None)`**
   → JSON summary + a written HTML report path.
-- **`qa_crawl(url, repo_path=None, headless=True, max_depth=2, max_actions=50, wall_clock_seconds=180, allow_destructive=None, parallel=1, own_target=False, direct_mode=False, cookies=None, login_macro=None)`**
+- **`qa_crawl(url, repo_path=None, headless=True, max_depth=2, max_actions=50, wall_clock_seconds=180, allow_destructive=None, parallel=1, own_target=False, direct_mode=False, cookies=None, login_macro=None, screenshot=False, screenshot_dir=None)`**
   → JSON `CrawlReport` (BFS-discovered pages, each fuzzed; see Crawl mode above).
+  `screenshot=True` saves a PNG of every visited page (form-less pages included) and
+  returns the url → path pairs as `screenshots` — `Read` those paths directly to see
+  what the crawler saw.
 - **`qa_api_scan(spec, base_url, spec_kind="openapi", repo_path=None, headless=True, own_target=False, cookies=None, login_macro=None, plugins=None)`**
   → JSON `RunReport`. `spec` is the spec TEXT itself (OpenAPI JSON/YAML or GraphQL
   introspection JSON/SDL), not a file path; `spec_kind` is `"openapi"` (default) or
