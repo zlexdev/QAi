@@ -11,11 +11,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  # Everything that does not need a browser, so a typo or a type error comes back in
+  # ~4 minutes instead of waiting out the 30-minute Chromium suite below.
+  fast:
     runs-on: ubuntu-latest
-    # The suite drives a real browser and takes ~30 min; a tighter cap cancels it
-    # mid-run, which reads as a failure nobody can reproduce locally.
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -31,13 +31,30 @@ jobs:
       - name: Types
         run: uv run mypy qai
 
-      # The suite drives a real Chromium against the bundled demo target — without the
-      # browser binary every capture/crawl test errors at session start, not at assert.
+      # No Chromium install here — that is the point. A test that needs one is marked
+      # `browser` automatically (tests/conftest.py) and runs in the job below.
+      - name: Tests (no browser)
+        run: uv run pytest -q -m "not browser"
+
+  browser:
+    runs-on: ubuntu-latest
+    # Drives a real browser against the demo target; ~30 min. A tighter cap cancels it
+    # mid-run, which reads as a failure nobody can reproduce locally.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --extra dev --extra demo --extra api --extra apispec --extra mcp
+
       - name: Install Chromium
         run: uv run playwright install --with-deps chromium
 
-      - name: Tests
-        run: uv run pytest -q
+      - name: Tests (browser)
+        run: uv run pytest -q -m browser
 
   secrets:
     runs-on: ubuntu-latest

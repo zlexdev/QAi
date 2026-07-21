@@ -22,7 +22,23 @@ uv run mypy qai            # types, --strict
 uv run pytest -q           # tests
 ```
 
+Every check above also runs on each pull request, so a fork's failing test or type
+error blocks the merge.
+
 Secrets are scanned separately in CI (gitleaks over the working tree).
+
+### Running the suite in halves
+
+CI splits it so a typo comes back in minutes instead of half an hour:
+
+```bash
+uv run pytest -q -m "not browser"   # ~2s, needs no Chromium
+uv run pytest -q -m browser         # ~30 min, drives a real browser
+```
+
+You never write the `browser` marker yourself. It is applied automatically to any test
+whose module imports the browser stack or uses the `demo_server` fixture, so a new
+browser test lands in the right job without anyone remembering to label it.
 
 ## Releasing
 
@@ -34,9 +50,6 @@ git tag v0.2.0 && git push origin v0.2.0
 
 The release workflow re-runs the full gate against the tagged commit, builds the
 wheel and sdist, and attaches them to a generated GitHub Release.
-
-Every check above also runs on each pull request, so a fork's failing test or type
-error blocks the merge.
 
 Publishing to PyPI is not wired. It needs a one-time pending publisher registered on
 pypi.org (project name, owner, repo, workflow file, environment) before the first
