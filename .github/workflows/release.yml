@@ -8,7 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Same browser suite as ci.yml — see the note there on why 20 was too tight.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
