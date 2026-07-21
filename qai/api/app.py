@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version
+
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from scalar_fastapi import get_scalar_api_reference
@@ -9,10 +11,17 @@ from qai.api.routes import health_router, jobs_router, pipeline_router, scan_rou
 from qai.api.settings import Settings
 from qai.engine.logging import configure_logging
 
+try:
+    _VERSION = version("qai")
+except PackageNotFoundError:  # source checkout with no install — dev only, never shipped
+    _VERSION = "0.0.0+dev"
+
 
 def create_app() -> FastAPI:
     configure_logging()
-    app = FastAPI(title="QAi remote API", version="0.1.0")
+    # Read from package metadata, not a literal: a second copy of the version drifts
+    # from pyproject the first time only one of them is bumped.
+    app = FastAPI(title="QAi remote API", version=_VERSION)
 
     app.include_router(health_router)
     app.include_router(scan_router)

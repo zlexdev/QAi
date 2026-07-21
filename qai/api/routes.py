@@ -104,8 +104,12 @@ async def submit_crawl(req: CrawlRequest) -> JobAccepted:
         max_depth=req.max_depth,
         max_actions=req.max_actions,
         wall_clock_seconds=req.wall_clock_seconds,
+        include_subdomains=req.include_subdomains,
+        allowed_domains=req.allowed_domains or [],
     )
-    allowlist = frozenset(req.allowed_domains) if req.allowed_domains else frozenset()
+    # Hosts and destructive-action selectors are different vocabularies: allowed_domains
+    # widens crawl SCOPE, allow_destructive permits clicking a specific delete/pay control.
+    allowlist = frozenset(req.allow_destructive or [])
 
     async def _run() -> dict[str, Any]:
         report = await run_crawl(

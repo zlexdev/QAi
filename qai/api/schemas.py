@@ -69,7 +69,9 @@ class CrawlRequest(BaseModel):
     allowed_domains: list[str] | None = None
     screenshot: bool = False
     screenshot_dir: str | None = None
-    allow_destructive: bool | None = None
+    # A list of selectors, not a bool — the same shape as qa_crawl's param and the CLI's
+    # repeatable --allow-destructive. Permission is always per-control, never global.
+    allow_destructive: list[str] | None = None
     parallel: int = 1
     own_target: bool = False
     direct_mode: bool = False

@@ -13,7 +13,9 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The suite drives a real browser and takes ~30 min; a tighter cap cancels it
+    # mid-run, which reads as a failure nobody can reproduce locally.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
