@@ -1,0 +1,18 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Non-secrets that the generic-api-key heuristic mistakes for credentials"
+
+paths = [
+  # A local dev venv is not source; vendored crypto/JWT libs carry test vectors and
+  # constant tables that trip every generic key rule. CI never checks this out, but a
+  # contributor running gitleaks locally otherwise drowns in vendor noise.
+  '''^\.venv/''',
+]
+
+regexes = [
+  # Argument forwarding, not a credential: the generic-api-key rule sees `password,`
+  # on the line and reads the NEXT kwarg as its value. Both sides are parameter names.
+  '''success_indicator=success_indicator''',
+]
