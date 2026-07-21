@@ -8,4 +8,5 @@ qai-report.html
 qai-report.json
 qai-reports/
 *.har
+*.log
 .plans/

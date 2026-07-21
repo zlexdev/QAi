@@ -1,0 +1,26 @@
+# Install once per clone:
+#   uv run pre-commit install --hook-type pre-commit --hook-type pre-push
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+
+      # Heavier gates run on push, not on every commit — mypy --strict and a
+      # Chromium-driving suite are minutes, and nobody keeps a hook that slow.
+      - id: mypy
+        name: mypy
+        entry: uv run mypy qai
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: pytest
+        name: pytest
+        entry: uv run pytest -q
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

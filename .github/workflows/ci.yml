@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --extra dev --extra demo --extra api --extra apispec --extra mcp
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Types
+        run: uv run mypy qai
+
+      # The suite drives a real Chromium against the bundled demo target — without the
+      # browser binary every capture/crawl test errors at session start, not at assert.
+      - name: Install Chromium
+        run: uv run playwright install --with-deps chromium
+
+      - name: Tests
+        run: uv run pytest -q
+
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # The CLI is free; gitleaks-action needs a paid license on org repos.
+      - name: Scan working tree
+        run: >-
+          docker run --rm -v "${{ github.workspace }}:/repo"
+          ghcr.io/gitleaks/gitleaks:latest
+          detect --source /repo --no-git --redact --no-banner
